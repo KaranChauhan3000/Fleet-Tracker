@@ -21,6 +21,28 @@ function formatLog(log) {
   };
 }
 
+// ── GET /api/admin/fuel-logs/stats ───────────────────────────────
+// Returns whole-range totals (spend / litres / fills) via aggregation.
+// Used by MonthlyFuelLogs to show accurate stats across all pages.
+exports.getFuelLogStats = async (req, res, next) => {
+  try {
+    const cid = req.user.companyId;
+    const filter = { companyId: toOid(cid) };
+    if (req.query.from || req.query.to) {
+      filter.filledAt = {};
+      if (req.query.from) filter.filledAt.$gte = new Date(req.query.from);
+      if (req.query.to)   filter.filledAt.$lte = new Date(req.query.to + 'T23:59:59');
+    }
+    const [result] = await FuelLog.aggregate([
+      { $match: filter },
+      { $group: { _id: null, spend: { $sum: '$totalCost' }, litres: { $sum: '$litres' }, fills: { $sum: 1 } } },
+    ]);
+    res.json(result
+      ? { spend: result.spend, litres: result.litres, fills: result.fills }
+      : { spend: 0, litres: 0, fills: 0 });
+  } catch (err) { next(err); }
+};
+
 // ── GET /api/admin/fuel-logs ──────────────────────────────────────
 exports.listFuelLogs = async (req, res, next) => {
   try {

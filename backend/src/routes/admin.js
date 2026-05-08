@@ -73,6 +73,7 @@ router.post('/vehicles/:id/documents',           upload.single('file'), document
 router.delete('/vehicles/:id/documents/:docId',  documentCtrl.deleteVehicleDocument);
 
 // ── Fuel Logs ─────────────────────────────────────────────────────
+router.get('/fuel-logs/stats', fuelLogCtrl.getFuelLogStats);  // must be before /:id
 router.get('/fuel-logs',     fuelLogCtrl.listFuelLogs);
 router.post('/fuel-logs',
   [body('vehicleId').notEmpty(), body('userId').notEmpty(), body('litres').isFloat({ min: 0.1 }), body('costPerLitre').isFloat({ min: 0.01 }), body('odometer').isFloat({ min: 0 })],
