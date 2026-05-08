@@ -1,0 +1,27 @@
+{
+  "name": "fleetpro-v3",
+  "version": "3.0.0",
+  "description": "FleetPro v3 — Production Fleet Management SaaS",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "install:backend":    "cd backend && npm install",
+    "install:user":       "cd frontend-user && npm install",
+    "install:admin":      "cd frontend-admin && npm install",
+    "install:superadmin": "cd frontend-superadmin && npm install",
+    "install:all":        "npm run install:backend && npm run install:user && npm run install:admin && npm run install:superadmin",
+    "build:user":         "cd frontend-user && npm run build",
+    "build:admin":        "cd frontend-admin && npm run build",
+    "build:superadmin":   "cd frontend-superadmin && npm run build",
+    "build:all":          "npm run build:user && npm run build:admin && npm run build:superadmin",
+    "build":              "bash build.sh",
+    "seed":               "cd backend && node src/utils/seed.js",
+    "start":              "cd backend && node src/server.js",
+    "dev:backend":        "cd backend && npm run dev",
+    "dev:user":           "cd frontend-user && npm run dev",
+    "dev:admin":          "cd frontend-admin && npm run dev",
+    "dev:superadmin":     "cd frontend-superadmin && npm run dev"
+  }
+}

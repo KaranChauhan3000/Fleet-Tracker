@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend-user/node_modules/
+frontend-admin/node_modules/
+frontend-superadmin/node_modules/
+
+# Env files
+.env
+backend/.env
+
+# Build outputs (built during deploy on Render - do NOT commit dist)
+# If you want to commit dist instead of building on Render, remove these:
+frontend-user/dist/
+frontend-admin/dist/
+frontend-superadmin/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
