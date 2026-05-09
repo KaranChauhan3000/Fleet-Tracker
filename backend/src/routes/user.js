@@ -3,6 +3,7 @@ const { body } = require('express-validator');
 const { protect } = require('../middleware/auth');
 const { validate } = require('../middleware/errorHandler');
 const ctrl = require('../controllers/userAppController');
+const { upload } = require('../utils/upload');
 
 const router = express.Router();
 router.use(protect);
@@ -10,6 +11,9 @@ router.use(protect);
 router.get('/profile',        ctrl.getProfile);
 router.get('/vehicles',       ctrl.getVehicles);
 router.get('/my-documents',   ctrl.getMyDocuments);
+router.post('/my-documents',  upload.single('file'), ctrl.uploadMyDocument);
+router.delete('/my-documents/:docId', ctrl.deleteMyDocument);
+router.get('/vehicle-documents', ctrl.getVehicleDocuments);
 
 router.get('/fuel-logs',  ctrl.listFuelLogs);
 router.post('/fuel-logs',

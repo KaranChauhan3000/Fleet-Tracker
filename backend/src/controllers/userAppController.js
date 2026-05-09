@@ -1,5 +1,8 @@
 const { User, Vehicle, FuelLog, Challan, ServiceLog } = require('../models');
 const { recalcVehicleLogs } = require('../utils/fuelCalc');
+const { uploadToCloudinary } = require('../utils/upload');
+const cloudinary = require('../config/cloudinary');
+const cloudinary = require('../config/cloudinary');
 
 // ── GET /api/user/profile ─────────────────────────────────────────
 exports.getProfile = async (req, res, next) => {
@@ -251,5 +254,82 @@ exports.getMyDocuments = async (req, res, next) => {
     const user = await User.findById(req.user.id).select('documents');
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json({ documents: user.documents || [] });
+  } catch (err) { next(err); }
+};
+
+// ── POST /api/user/my-documents ───────────────────────────────────
+exports.uploadMyDocument = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'user') return res.status(403).json({ message: 'User only' });
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
+
+    const folder = `fleetpro/${user.companyId}/users/${user._id}`;
+    const result = await uploadToCloudinary(req.file.buffer, req.file.originalname, folder);
+
+    const doc = {
+      docType:  req.body.docType || 'other',
+      label:    req.body.label   || req.body.docType || 'Document',
+      url:      result.secure_url,
+      publicId: result.public_id,
+      fileType: result.resource_type === 'image' ? 'image' : 'pdf',
+    };
+
+    user.documents = user.documents || [];
+    user.documents.push(doc);
+    await user.save();
+
+    res.status(201).json({ document: user.documents[user.documents.length - 1] });
+  } catch (err) { next(err); }
+};
+
+// ── DELETE /api/user/my-documents/:docId ─────────────────────────
+exports.deleteMyDocument = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'user') return res.status(403).json({ message: 'User only' });
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const doc = user.documents?.id(req.params.docId);
+    if (!doc) return res.status(404).json({ message: 'Document not found' });
+
+    try {
+      await cloudinary.uploader.destroy(doc.publicId, {
+        resource_type: doc.fileType === 'pdf' ? 'raw' : 'image',
+      });
+    } catch {}
+
+    user.documents.pull({ _id: req.params.docId });
+    await user.save();
+    res.json({ success: true });
+  } catch (err) { next(err); }
+};
+
+// ── GET /api/user/vehicle-documents ──────────────────────────────
+exports.getVehicleDocuments = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'user') return res.status(403).json({ message: 'User only' });
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const ids = user.assignedVehicleIds?.length
+      ? user.assignedVehicleIds
+      : (user.assignedVehicleId ? [user.assignedVehicleId] : []);
+
+    if (!ids.length) return res.json({ vehicles: [] });
+
+    const vehicles = await Vehicle.find({ _id: { $in: ids }, companyId: user.companyId })
+      .select('plateNumber make model documents');
+
+    res.json({
+      vehicles: vehicles.map(v => ({
+        id: v._id,
+        plateNumber: v.plateNumber,
+        make: v.make,
+        model: v.model,
+        documents: v.documents || [],
+      })),
+    });
   } catch (err) { next(err); }
 };
