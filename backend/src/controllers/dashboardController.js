@@ -29,13 +29,13 @@ exports.getStats = async (req, res, next) => {
     const monthStart = new Date(reqYear, reqMonth, 1);
     const monthEnd   = new Date(reqYear, reqMonth + 1, 1);
 
-    const [monthAgg, monthChallanAgg, monthServiceAgg, monthInsuranceAgg, monthLogs] = await Promise.all([
+    const [monthAgg, monthChallanAgg, monthServiceAgg, monthInsuranceAgg, monthLogs, monthEmiAgg] = await Promise.all([
       FuelLog.aggregate([
         { $match: { companyId: toOid(cid), filledAt: { $gte: monthStart, $lt: monthEnd } } },
         { $group: { _id: null, total: { $sum: '$totalCost' }, litres: { $sum: '$litres' }, fills: { $sum: 1 }, totalKm: { $sum: { $ifNull: ['$kmDriven', 0] } } } },
       ]),
       Challan.aggregate([
-        { $match: { companyId: toOid(cid), status: 'paid', issuedAt: { $gte: monthStart, $lt: monthEnd } } },
+        { $match: { companyId: toOid(cid), status: 'paid', paidAt: { $gte: monthStart, $lt: monthEnd } } },
         { $group: { _id: null, total: { $sum: '$amount' } } },
       ]),
       ServiceLog.aggregate([
@@ -48,12 +48,20 @@ exports.getStats = async (req, res, next) => {
       ]),
       FuelLog.find({ companyId: toOid(cid), filledAt: { $gte: monthStart, $lt: monthEnd } })
         .sort({ filledAt: 1 }).select('totalCost kmDriven efficiency').lean(),
+      // EMI payments approved this month
+      VehicleFinance.aggregate([
+        { $match: { companyId: toOid(cid), 'emiPayments.paidAt': { $gte: monthStart, $lt: monthEnd } } },
+        { $unwind: '$emiPayments' },
+        { $match: { 'emiPayments.status': 'approved', 'emiPayments.paidAt': { $gte: monthStart, $lt: monthEnd } } },
+        { $group: { _id: null, total: { $sum: '$emiPayments.amount' } } },
+      ]),
     ]);
 
     const monthData = monthAgg[0] || { total: 0, litres: 0, fills: 0, totalKm: 0 };
     const monthChallanSpend = monthChallanAgg[0]?.total ?? 0;
     const monthServiceSpend = monthServiceAgg[0]?.total ?? 0;
     const monthInsuranceSpend = monthInsuranceAgg[0]?.total ?? 0;
+    const monthEmiSpend = monthEmiAgg[0]?.total ?? 0;
     const monthKm = parseFloat((monthData.totalKm).toFixed(1));
     const burnedCostMonth = monthLogs.length > 1 ? monthLogs.slice(0, -1).reduce((s, l) => s + l.totalCost, 0) : 0;
     const monthCostPerKm = monthKm > 0 ? parseFloat((burnedCostMonth / monthKm).toFixed(2)) : null;
@@ -139,7 +147,8 @@ exports.getStats = async (req, res, next) => {
       monthChallanSpend,
       monthServiceSpend,
       monthInsuranceSpend,
-      monthTotalSpend: monthData.total + monthChallanSpend + monthServiceSpend + monthInsuranceSpend,
+      monthEmiSpend,
+      monthTotalSpend: monthData.total + monthChallanSpend + monthServiceSpend + monthInsuranceSpend + monthEmiSpend,
       // Legacy key kept for backward compat
       monthSpend: monthData.total,
       monthFills: monthData.fills,

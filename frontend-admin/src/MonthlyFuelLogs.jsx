@@ -465,7 +465,7 @@ export default function MonthlyFuelLogs({ admin, onLogout, onNavigate, initialMo
                 <LogCard
                   key={log.id}
                   log={log}
-                  serial={(page - 1) * LIMIT + i + 1}
+                  serial={total - (page - 1) * LIMIT - i}
                   onRefresh={() => load(page)}
                   onEdit={() => setEditLog(log)}
                   toast={toast}

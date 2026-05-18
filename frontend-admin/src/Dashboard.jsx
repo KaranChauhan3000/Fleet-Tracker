@@ -123,7 +123,7 @@ function StatCard({ icon: Icon, color, dimColor, label, value, sub, onClick }) {
   );
 }
 
-export default function Dashboard({ admin, onNavigate, onLogout, dark, onToggleTheme }) {
+export default function Dashboard({ admin, onNavigate, onLogout, dark, onToggleTheme, refreshKey = 0 }) {
   const toast = useToast();
   const [stats, setStats]   = useState(null);
   const [loading, setLoading] = useState(true);
@@ -156,6 +156,11 @@ export default function Dashboard({ admin, onNavigate, onLogout, dark, onToggleT
     loadStats(bd.getFullYear(), bd.getMonth());
   }, [monthOffset]);
 
+  // Refresh when returning from a sub-screen (e.g. after marking challan paid)
+  useEffect(() => {
+    if (typeof refreshKey === 'number' && refreshKey > 0) silentRefresh();
+  }, [refreshKey]);
+
   // Silent auto-refresh every 60s — no loading flash, only while on current month
   useEffect(() => {
     const timer = setInterval(() => {
@@ -166,6 +171,15 @@ export default function Dashboard({ admin, onNavigate, onLogout, dark, onToggleT
       }
     }, 60_000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Refresh when user returns to this tab/app (e.g. after marking a challan paid)
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState === 'visible') silentRefresh();
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
 
   async function silentRefresh() {
@@ -252,6 +266,7 @@ export default function Dashboard({ admin, onNavigate, onLogout, dark, onToggleT
     + (s.monthChallanSpend ?? 0)
     + (s.monthServiceSpend ?? 0)
     + (s.monthInsuranceSpend ?? 0)
+    + (s.monthEmiSpend ?? 0)
   );
   const monthFuelSpend  = s.monthFuelSpend ?? s.monthSpend ?? 0;
 
@@ -358,7 +373,7 @@ export default function Dashboard({ admin, onNavigate, onLogout, dark, onToggleT
                 ₹{fmt(monthTotalSpend, 0)}
               </p>
               <p style={{ fontSize:9, color:'rgba(255,255,255,0.65)', marginTop:4 }}>
-                Fuel · Challans · Services · Insurance
+                Fuel · Challans · Services · Insurance · EMI
               </p>
               {!isCurrentMonth && (
                 <p style={{ fontSize:10, color:'rgba(255,255,255,0.70)', marginTop:2, fontWeight:600 }}>{monthLabel}</p>
@@ -375,8 +390,8 @@ export default function Dashboard({ admin, onNavigate, onLogout, dark, onToggleT
           </div>
 
           {/* Breakdown pills */}
-          {(s.monthChallanSpend != null || s.monthServiceSpend != null || s.monthInsuranceSpend != null) && (
-            <div style={{ display:'flex', justifyContent:'center', gap:8, marginTop:8 }}>
+          {(s.monthChallanSpend != null || s.monthServiceSpend != null || s.monthInsuranceSpend != null || s.monthEmiSpend != null) && (
+            <div style={{ display:'flex', justifyContent:'center', gap:8, marginTop:8, flexWrap:'wrap' }}>
               <span style={{ fontSize:9, fontWeight:700, color:'rgba(255,255,255,0.70)', background:'rgba(0,0,0,0.15)', padding:'2px 8px', borderRadius:10 }}>
                 ⛽ ₹{fmt(monthFuelSpend, 0)}
               </span>
@@ -393,6 +408,11 @@ export default function Dashboard({ admin, onNavigate, onLogout, dark, onToggleT
               {s.monthInsuranceSpend > 0 && (
                 <span style={{ fontSize:9, fontWeight:700, color:'rgba(255,255,255,0.70)', background:'rgba(0,0,0,0.15)', padding:'2px 8px', borderRadius:10 }}>
                   🛡️ ₹{fmt(s.monthInsuranceSpend, 0)}
+                </span>
+              )}
+              {s.monthEmiSpend > 0 && (
+                <span style={{ fontSize:9, fontWeight:700, color:'rgba(255,255,255,0.70)', background:'rgba(0,0,0,0.15)', padding:'2px 8px', borderRadius:10 }}>
+                  💳 ₹{fmt(s.monthEmiSpend, 0)}
                 </span>
               )}
             </div>

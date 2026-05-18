@@ -146,6 +146,7 @@ function App() {
   const screenStackRef = useRef([{ screen: 'dashboard', meta: {} }]);
   const adminScreen = screenStack[screenStack.length - 1]?.screen ?? 'dashboard';
   const adminMeta   = screenStack[screenStack.length - 1]?.meta   ?? {};
+  const [dashboardRefreshKey, setDashboardRefreshKey] = useState(0);
 
   const analyticsVehicleId  = adminMeta.vehicleId  ?? null;
   const analyticsInitialTab = adminMeta.initialTab ?? null;
@@ -198,6 +199,8 @@ function App() {
     }
     screenStackRef.current = next;
     setScreenStack(next);
+    // Refresh dashboard stats when returning to it from any sub-screen
+    if (topScreen === 'dashboard') setDashboardRefreshKey(k => k + 1);
   }
 
   function setAdminScreen(screen) {
@@ -644,7 +647,7 @@ function App() {
             {id === 'dashboard' && (
               <MembershipBanner onGetMembership={() => setAdminScreen('membership')} />
             )}
-            {id === 'dashboard' && <Dashboard      {...props} />}
+            {id === 'dashboard' && <Dashboard      {...props} refreshKey={dashboardRefreshKey} />}
             {id === 'vehicles'  && <VehiclesPage    {...props} />}
             {id === 'fuellogs'  && <FuelLogs        {...props} />}
             {id === 'challans'  && <Challans        {...props} />}
