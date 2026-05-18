@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Theme -->
+    <meta name="theme-color" content="#0A0F1E" />
+
+    <!-- iOS PWA: Critical tags Safari needs to enable "Add to Home Screen" as a real app -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="FleetPro" />
+
+    <!-- iOS Icons (Safari ignores manifest icons — needs explicit apple-touch-icon link tags) -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icon-152.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png" />
+    <link rel="apple-touch-icon" sizes="144x144" href="/icon-144.png" />
+
+    <!-- Favicon -->
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+
+    <!-- App meta -->
+    <meta name="application-name" content="FleetPro Admin" />
+    <meta name="description" content="FleetPro Admin Panel - Manage your fleet" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <title>FleetPro Admin</title>
+
+    <!--
+      iOS PWA SLUG RECOVERY
+      =====================
+      When Safari launches a PWA from the home screen it always opens start_url
+      from manifest.json (/admin) — the ?company=xxx query param is stripped.
+
+      This script runs BEFORE React boots:
+        1. If ?company= is already in the URL → save it to localStorage + sessionStorage and do nothing.
+        2. If ?company= is missing (iOS PWA launch) → read the slug saved in
+           localStorage from a previous normal-browser visit, inject it into
+           sessionStorage so api.js can find it, and rewrite the URL with
+           history.replaceState so React Router (if added later) also sees it.
+
+      No redirect, no flash — just a synchronous URL fix before the app renders.
+    -->
+    <script>
+      (function () {
+        try {
+          var params = new URLSearchParams(window.location.search);
+          var slug = params.get('company');
+
+          if (slug) {
+            // Normal browser visit — persist for future PWA launches
+            localStorage.setItem('fp_admin_company', slug);
+            sessionStorage.setItem('fp_admin_company', slug);
+          } else {
+            // iOS PWA launch — recover slug from localStorage
+            var saved = localStorage.getItem('fp_admin_company');
+            if (saved) {
+              sessionStorage.setItem('fp_admin_company', saved);
+              // Rewrite the URL so the app sees ?company=xxx (no page reload)
+              var newUrl = window.location.pathname + '?company=' + encodeURIComponent(saved) + window.location.hash;
+              history.replaceState(null, '', newUrl);
+            }
+          }
+        } catch (e) {
+          // localStorage/sessionStorage blocked (private browsing) — fail silently
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+
+    <!-- Register Service Worker (required for PWA installability) -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('SW registered:', reg.scope))
+            .catch(err => console.error('SW registration failed:', err));
+        });
+      }
+    </script>
+  </body>
+</html>
