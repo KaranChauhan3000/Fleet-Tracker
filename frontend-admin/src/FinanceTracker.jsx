@@ -55,7 +55,7 @@ function ProgressBar({ paid, total }) {
   );
 }
 
-function FinanceCard({ entry, onEdit, onDelete, onMarkPaid }) {
+function FinanceCard({ entry, onEdit, onDelete, onEmiAction }) {
   const status = getStatus(entry);
   const { color, dim, border } = EMI_COLORS[status];
   const nextEmi = getNextEmiDate(entry.emiDay);
@@ -100,9 +100,9 @@ function FinanceCard({ entry, onEdit, onDelete, onMarkPaid }) {
         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
           {!isDone && (
             <button
-              onClick={() => onMarkPaid(entry)}
+              onClick={() => onEmiAction(entry)}
               style={{ width: 28, height: 28, borderRadius: 7, background: 'var(--success-dim)', border: '1px solid rgba(22,163,74,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-              title="Mark EMI Paid"
+              title="Record EMI Payment"
             >
               <CheckCircle2 size={13} color="var(--success)" />
             </button>
@@ -217,6 +217,9 @@ export default function FinanceTracker({ admin, onNavigate, onLogout, dark, onTo
   const [filter, setFilter] = useState('all'); // all | active | done
   const [deleteTarget, setDeleteTarget] = useState(null);
 
+  const [emiActionTarget, setEmiActionTarget] = useState(null);
+  const [emiActioning, setEmiActioning] = useState(false);
+
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
@@ -262,15 +265,21 @@ export default function FinanceTracker({ admin, onNavigate, onLogout, dark, onTo
     setShowForm(true);
   }
 
-  async function handleMarkPaid(entry) {
-    const newPaid = Math.min(entry.emisPaid + 1, entry.totalEmis);
+  async function handleEmiAction(action) {
+    if (!emiActionTarget) return;
+    setEmiActioning(true);
     try {
-      const { entry: updated } = await api.patch(`/admin/finance/${entry._id}`, { emisPaid: newPaid });
-      setEntries(prev => prev.map(e => e._id === updated._id ? updated : e));
-      toast(`EMI marked paid (${newPaid}/${entry.totalEmis})`, 'success');
+      const res = await api.post(`/admin/finance/${emiActionTarget._id}/emi-action`, { action });
+      if (res.entry) {
+        setEntries(prev => prev.map(e => e._id === res.entry._id ? res.entry : e));
+      }
+      if (action === 'approved') toast(`EMI approved & recorded in this month's spend ✓`, 'success');
+      else if (action === 'disputed') toast('EMI marked as disputed', 'warning');
+      else toast('EMI payment rejected — no changes made', 'info');
+      setEmiActionTarget(null);
     } catch (err) {
-      toast('Failed to update: ' + err.message, 'error');
-    }
+      toast('Failed: ' + err.message, 'error');
+    } finally { setEmiActioning(false); }
   }
 
   async function handleSave() {
@@ -428,7 +437,7 @@ export default function FinanceTracker({ admin, onNavigate, onLogout, dark, onTo
                 entry={entry}
                 onEdit={openEdit}
                 onDelete={e => setDeleteTarget(e)}
-                onMarkPaid={handleMarkPaid}
+                onEmiAction={e => setEmiActionTarget(e)}
               />
             ))}
           </div>
@@ -543,6 +552,49 @@ export default function FinanceTracker({ admin, onNavigate, onLogout, dark, onTo
           >
             {saving ? <span className="spinner" style={{ width: 14, height: 14, borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }} /> : editEntry ? 'Save Changes' : 'Add Finance Entry'}
           </button>
+        </Modal>
+      )}
+
+      {/* EMI Action Modal — 3-button notification alert */}
+      {emiActionTarget && (
+        <Modal title="Record EMI Payment" onClose={() => !emiActioning && setEmiActionTarget(null)}>
+          <div style={{ textAlign: 'center', padding: '4px 0 12px' }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+              <CreditCard size={20} color="var(--accent)" />
+            </div>
+            <p style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>
+              EMI Payment — {emiActionTarget.vehicleId?.plateNumber}
+            </p>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+              {emiActionTarget.lenderName} · <strong style={{ color: 'var(--accent)' }}>{fmtRs(emiActionTarget.emiAmount)}</strong>
+            </p>
+            <p style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 8, padding: '6px 12px', background: 'var(--bg-elevated)', borderRadius: 8 }}>
+              Paid EMI {emiActionTarget.emisPaid + 1}/{emiActionTarget.totalEmis} · will be recorded in this month's spend
+            </p>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button
+              onClick={() => handleEmiAction('approved')}
+              disabled={emiActioning}
+              style={{ width: '100%', padding: '11px', borderRadius: 10, border: 'none', background: 'var(--success)', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+            >
+              <CheckCircle2 size={14} /> Approved — Mark Paid
+            </button>
+            <button
+              onClick={() => handleEmiAction('disputed')}
+              disabled={emiActioning}
+              style={{ width: '100%', padding: '11px', borderRadius: 10, border: '1px solid var(--warning)', background: 'var(--warning-dim)', color: 'var(--warning)', fontWeight: 800, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+            >
+              <AlertCircle size={14} /> Disputed
+            </button>
+            <button
+              onClick={() => handleEmiAction('rejected')}
+              disabled={emiActioning}
+              style={{ width: '100%', padding: '11px', borderRadius: 10, border: '1px solid rgba(220,38,38,0.3)', background: 'var(--danger-dim)', color: 'var(--danger)', fontWeight: 800, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+            >
+              <X size={14} /> Rejected — No Change
+            </button>
+          </div>
         </Modal>
       )}
 

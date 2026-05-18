@@ -57,6 +57,40 @@ exports.updateFinance = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// ── POST /api/admin/finance/:id/emi-action ───────────────────────
+// action: 'approved' | 'rejected' | 'disputed'
+exports.emiAction = async (req, res, next) => {
+  try {
+    const cid = req.user.companyId;
+    const entry = await VehicleFinance.findOne({ _id: req.params.id, companyId: toOid(cid) });
+    if (!entry) return res.status(404).json({ message: 'Finance entry not found' });
+
+    const { action } = req.body;
+    if (!['approved', 'rejected', 'disputed'].includes(action)) {
+      return res.status(400).json({ message: 'action must be approved, rejected, or disputed' });
+    }
+
+    if (action === 'approved') {
+      const newPaid = Math.min(entry.emisPaid + 1, entry.totalEmis);
+      entry.emisPaid = newPaid;
+      entry.emiPayments.push({ paidAt: new Date(), amount: entry.emiAmount, status: 'approved' });
+      await entry.save();
+      const populated = await VehicleFinance.findById(entry._id).populate('vehicleId', 'plateNumber make model year').lean();
+      return res.json({ entry: populated, action, message: 'EMI approved and recorded' });
+    }
+
+    if (action === 'disputed') {
+      entry.emiPayments.push({ paidAt: new Date(), amount: entry.emiAmount, status: 'disputed' });
+      await entry.save();
+      const populated = await VehicleFinance.findById(entry._id).populate('vehicleId', 'plateNumber make model year').lean();
+      return res.json({ entry: populated, action, message: 'EMI marked as disputed' });
+    }
+
+    // rejected — do nothing to counts
+    return res.json({ action, message: 'EMI payment rejected, no changes made' });
+  } catch (err) { next(err); }
+};
+
 // ── DELETE /api/admin/finance/:id ────────────────────────────────
 exports.deleteFinance = async (req, res, next) => {
   try {

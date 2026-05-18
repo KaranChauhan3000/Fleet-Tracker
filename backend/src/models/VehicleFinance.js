@@ -11,6 +11,11 @@ const vehicleFinanceSchema = new mongoose.Schema({
   endDate:      { type: Date, required: true },
   totalEmis:    { type: Number, required: true, min: 1 },
   emisPaid:     { type: Number, default: 0, min: 0 },
+  emiPayments:  [{ // track each EMI payment with the date it was approved
+    paidAt:     { type: Date, default: Date.now },
+    amount:     { type: Number },
+    status:     { type: String, enum: ['approved', 'disputed'], default: 'approved' },
+  }],
   interestRate: { type: Number, default: null }, // annual %
   notes:        { type: String, trim: true, default: '' },
   isActive:     { type: Boolean, default: true },

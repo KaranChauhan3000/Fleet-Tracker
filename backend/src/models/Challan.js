@@ -10,6 +10,7 @@ const challanSchema = new mongoose.Schema({
   location:  { type: String, trim: true, default: '' },
   issuedAt:  { type: Date, default: Date.now },
   dueDate:   { type: Date, default: null },
+  paidAt:    { type: Date, default: null }, // set when status changes to 'paid'
   status:    { type: String, enum: ['unpaid', 'paid', 'disputed'], default: 'unpaid' },
   notes:     { type: String, trim: true, default: '' },
 }, { timestamps: true });

@@ -127,6 +127,7 @@ router.post('/finance',
   financeCtrl.createFinance
 );
 router.patch('/finance/:id',   financeCtrl.updateFinance);
+router.post('/finance/:id/emi-action', financeCtrl.emiAction);
 router.delete('/finance/:id',  financeCtrl.deleteFinance);
 
 // ── Insurance Policies ────────────────────────────────────────────

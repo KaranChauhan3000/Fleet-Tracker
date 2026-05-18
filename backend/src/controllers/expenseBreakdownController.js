@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { FuelLog, Challan, ServiceLog, Vehicle } = require('../models');
+const { FuelLog, Challan, ServiceLog, Vehicle, VehicleFinance } = require('../models');
 const InsurancePolicy = require('../models/InsurancePolicy');
 
 const toOid = id => new mongoose.Types.ObjectId(String(id));
@@ -7,6 +7,8 @@ const toOid = id => new mongoose.Types.ObjectId(String(id));
 // ── GET /api/admin/expense-breakdown?year=&month= ─────────────────
 // Returns a detailed breakdown of all expenses (fuel, challans, services)
 // for the requested month, grouped by vehicle and category.
+// Challans: bucketed by paidAt (the month they were actually paid), not issuedAt
+// EMI payments: bucketed by emiPayments[].paidAt (the month they were approved)
 exports.getExpenseBreakdown = async (req, res, next) => {
   try {
     const cid = req.user.companyId;
@@ -19,8 +21,8 @@ exports.getExpenseBreakdown = async (req, res, next) => {
     const monthStart = new Date(reqYear, reqMonth, 1);
     const monthEnd   = new Date(reqYear, reqMonth + 1, 1);
 
-    // ── Parallel fetch: fuel logs, challans, service logs, vehicles ──
-    const [fuelByVehicle, challanByVehicle, serviceByVehicle, insuranceByVehicle, vehicles, fuelDailyTrend, challanList, serviceList, insuranceList] = await Promise.all([
+    // ── Parallel fetch: fuel logs, challans (paid this month), service logs, vehicles ──
+    const [fuelByVehicle, challanByVehicle, serviceByVehicle, insuranceByVehicle, vehicles, fuelDailyTrend, challanList, serviceList, insuranceList, financeEntries] = await Promise.all([
 
       // Fuel grouped by vehicle
       FuelLog.aggregate([
@@ -36,9 +38,9 @@ exports.getExpenseBreakdown = async (req, res, next) => {
         { $sort: { totalCost: -1 } },
       ]),
 
-      // Challans grouped by vehicle
+      // Challans grouped by vehicle — bucket by paidAt (month they were paid)
       Challan.aggregate([
-        { $match: { companyId: toOid(cid), issuedAt: { $gte: monthStart, $lt: monthEnd } } },
+        { $match: { companyId: toOid(cid), status: 'paid', paidAt: { $gte: monthStart, $lt: monthEnd } } },
         { $group: {
           _id: '$vehicleId',
           totalAmount: { $sum: '$amount' },
@@ -81,10 +83,10 @@ exports.getExpenseBreakdown = async (req, res, next) => {
         { $sort: { _id: 1 } },
       ]),
 
-      // Individual challan entries
-      Challan.find({ companyId: cid, issuedAt: { $gte: monthStart, $lt: monthEnd } })
+      // Individual challan entries — show paid challans bucketed by paidAt
+      Challan.find({ companyId: cid, status: 'paid', paidAt: { $gte: monthStart, $lt: monthEnd } })
         .populate('vehicleId', 'plateNumber make model')
-        .sort({ issuedAt: -1 })
+        .sort({ paidAt: -1 })
         .lean(),
 
       // Individual service log entries
@@ -98,6 +100,11 @@ exports.getExpenseBreakdown = async (req, res, next) => {
         .populate('vehicleId', 'plateNumber make model')
         .sort({ startDate: -1 })
         .lean(),
+
+      // Finance entries — get EMI payments made this month
+      VehicleFinance.find({ companyId: toOid(cid), 'emiPayments.paidAt': { $gte: monthStart, $lt: monthEnd } })
+        .populate('vehicleId', 'plateNumber make model year')
+        .lean(),
     ]);
 
     // ── Build vehicle map ─────────────────────────────────────────
@@ -106,12 +113,38 @@ exports.getExpenseBreakdown = async (req, res, next) => {
       vehicleMap[String(v._id)] = v;
     }
 
+    // ── Process EMI payments for this month ───────────────────────
+    // Group approved EMI payments by vehicle
+    const emiByVehicle = {};
+    const emiEntries = [];
+    for (const fin of financeEntries) {
+      const vid = String(fin.vehicleId?._id || fin.vehicleId);
+      const monthPayments = (fin.emiPayments || []).filter(p =>
+        p.status === 'approved' &&
+        p.paidAt >= monthStart && p.paidAt < monthEnd
+      );
+      if (monthPayments.length === 0) continue;
+      const totalEmiPaid = monthPayments.reduce((s, p) => s + (p.amount || fin.emiAmount), 0);
+      emiByVehicle[vid] = (emiByVehicle[vid] || 0) + totalEmiPaid;
+      for (const p of monthPayments) {
+        emiEntries.push({
+          id: `${fin._id}-${p.paidAt.toISOString()}`,
+          plateNumber: fin.vehicleId?.plateNumber || 'Unknown',
+          make: fin.vehicleId?.make, model: fin.vehicleId?.model,
+          amount: p.amount || fin.emiAmount,
+          lenderName: fin.lenderName,
+          paidAt: p.paidAt,
+        });
+      }
+    }
+
     // ── Merge per-vehicle data ────────────────────────────────────
     const vehicleSet = new Set([
       ...fuelByVehicle.map(f => String(f._id)),
       ...challanByVehicle.map(c => String(c._id)),
       ...serviceByVehicle.map(s => String(s._id)),
       ...insuranceByVehicle.map(i => String(i._id)),
+      ...Object.keys(emiByVehicle),
     ]);
 
     const fuelMap      = Object.fromEntries(fuelByVehicle.map(f      => [String(f._id), f]));
@@ -126,7 +159,8 @@ exports.getExpenseBreakdown = async (req, res, next) => {
       const challan   = challanMap[vid]   || { totalAmount: 0, count: 0 };
       const service   = serviceMap[vid]   || { totalCost: 0, count: 0 };
       const insurance = insuranceMap[vid] || { totalPremium: 0, count: 0 };
-      const total     = fuel.totalCost + challan.totalAmount + service.totalCost + insurance.totalPremium;
+      const emiTotal  = emiByVehicle[vid] || 0;
+      const total     = fuel.totalCost + challan.totalAmount + service.totalCost + insurance.totalPremium + emiTotal;
 
       byVehicle.push({
         vehicleId: vid,
@@ -153,6 +187,9 @@ exports.getExpenseBreakdown = async (req, res, next) => {
           total: parseFloat((insurance.totalPremium || 0).toFixed(2)),
           count: insurance.count || 0,
         },
+        emi: {
+          total: parseFloat(emiTotal.toFixed(2)),
+        },
       });
     }
 
@@ -163,7 +200,8 @@ exports.getExpenseBreakdown = async (req, res, next) => {
     const totalChallan   = byVehicle.reduce((s, v) => s + v.challans.total, 0);
     const totalService   = byVehicle.reduce((s, v) => s + v.services.total, 0);
     const totalInsurance = byVehicle.reduce((s, v) => s + v.insurance.total, 0);
-    const grandTotal     = totalFuel + totalChallan + totalService + totalInsurance;
+    const totalEmi       = byVehicle.reduce((s, v) => s + v.emi.total, 0);
+    const grandTotal     = totalFuel + totalChallan + totalService + totalInsurance + totalEmi;
 
     // ── Fill daily trend for all days in month ────────────────────
     const daysInMonth = new Date(reqYear, reqMonth + 1, 0).getDate();
@@ -184,10 +222,12 @@ exports.getExpenseBreakdown = async (req, res, next) => {
         challans:     parseFloat(totalChallan.toFixed(2)),
         services:     parseFloat(totalService.toFixed(2)),
         insurance:    parseFloat(totalInsurance.toFixed(2)),
+        emi:          parseFloat(totalEmi.toFixed(2)),
         fuelPct:      grandTotal > 0 ? Math.round((totalFuel      / grandTotal) * 100) : 0,
         challanPct:   grandTotal > 0 ? Math.round((totalChallan   / grandTotal) * 100) : 0,
         servicePct:   grandTotal > 0 ? Math.round((totalService   / grandTotal) * 100) : 0,
         insurancePct: grandTotal > 0 ? Math.round((totalInsurance / grandTotal) * 100) : 0,
+        emiPct:       grandTotal > 0 ? Math.round((totalEmi       / grandTotal) * 100) : 0,
       },
       byVehicle,
       dailyTrend,
@@ -196,7 +236,7 @@ exports.getExpenseBreakdown = async (req, res, next) => {
         plateNumber: c.vehicleId?.plateNumber || 'Unknown',
         make: c.vehicleId?.make, model: c.vehicleId?.model,
         amount: c.amount, offence: c.offence, status: c.status,
-        issuedAt: c.issuedAt,
+        issuedAt: c.issuedAt, paidAt: c.paidAt,
       })),
       serviceEntries: serviceList.map(s => ({
         id: s._id,
@@ -216,6 +256,7 @@ exports.getExpenseBreakdown = async (req, res, next) => {
         startDate: p.startDate,
         expiryDate: p.expiryDate,
       })),
+      emiEntries,
     });
   } catch (err) { next(err); }
 };

@@ -107,7 +107,7 @@ exports.listChallans = async (req, res, next) => {
       data: challans.map(c => ({
         id: c._id, challanNo: c.challanNo, offence: c.offence,
         amount: c.amount, location: c.location, notes: c.notes,
-        issuedAt: c.issuedAt, dueDate: c.dueDate, status: c.status,
+        issuedAt: c.issuedAt, dueDate: c.dueDate, status: c.status, paidAt: c.paidAt,
         vehicleId: c.vehicleId?._id, plateNumber: c.vehicleId?.plateNumber,
         vehicleMake: c.vehicleId?.make, vehicleModel: c.vehicleId?.model,
         driverId: c.driverId?._id, driverName: c.driverId?.name, driverEmpId: c.driverId?.employeeId,
@@ -145,7 +145,11 @@ exports.updateChallan = async (req, res, next) => {
     if (!challan) return res.status(404).json({ message: 'Challan not found' });
 
     const { status, challanNo, offence, amount, location, dueDate, notes, driverId } = req.body;
-    if (status    !== undefined) challan.status    = status;
+    if (status    !== undefined) {
+      challan.status = status;
+      if (status === 'paid' && !challan.paidAt) challan.paidAt = new Date();
+      if (status !== 'paid') challan.paidAt = null;
+    }
     if (challanNo !== undefined) challan.challanNo = challanNo;
     if (offence   !== undefined) challan.offence   = offence;
     if (amount    !== undefined) challan.amount    = parseFloat(amount);

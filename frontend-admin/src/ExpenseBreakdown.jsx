@@ -21,6 +21,7 @@ function Pill({ color, label, value, pct }) {
     fuel:     { bg:'var(--success-dim)',  border:'rgba(22,163,74,0.25)',   text:'var(--success)',  icon:'⛽' },
     challans: { bg:'var(--danger-dim)',   border:'rgba(220,38,38,0.25)',   text:'var(--danger)',   icon:'📋' },
     services: { bg:'var(--accent-dim)',   border:'rgba(249,115,22,0.25)',  text:'var(--accent)',   icon:'🔧' },
+    emi:      { bg:'var(--warning-dim)',  border:'rgba(217,119,6,0.25)',   text:'var(--warning)',  icon:'💳' },
   }[color] || {};
 
   return (
@@ -313,10 +314,13 @@ export default function ExpenseBreakdown({ year, month, onBack }) {
             </div>
 
             {/* ── 3 category pills ──────────────────────────────── */}
-            <div style={{ display:'flex', gap:8 }}>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
               <Pill color="fuel"     label="Fuel"     value={s.fuel     ?? 0} pct={s.fuelPct     ?? 0} />
               <Pill color="challans" label="Challans" value={s.challans ?? 0} pct={s.challanPct  ?? 0} />
               <Pill color="services" label="Services" value={s.services ?? 0} pct={s.servicePct  ?? 0} />
+              {(s.emi ?? 0) > 0 && (
+                <Pill color="emi" label="EMIs" value={s.emi ?? 0} pct={s.emiPct ?? 0} />
+              )}
             </div>
 
             {/* ── Category split rings ───────────────────────────── */}
@@ -353,6 +357,7 @@ export default function ExpenseBreakdown({ year, month, onBack }) {
                 { id:'vehicles',  label:'Vehicles'  },
                 { id:'challans',  label:'Challans'  },
                 { id:'services',  label:'Services'  },
+                { id:'emis',      label:'EMIs'      },
               ].map(t => (
                 <button
                   key={t.id}
@@ -437,13 +442,40 @@ export default function ExpenseBreakdown({ year, month, onBack }) {
               <div>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
                   <p style={{ fontSize:12, fontWeight:800, color:'var(--text-primary)' }}>
-                    Challans this month
+                    Challans paid this month
                   </p>
                   <span style={{ fontSize:11, fontWeight:800, color:'var(--danger)' }}>
                     ₹{fmt(s.challans ?? 0, 0)} total
                   </span>
                 </div>
-                <EntryList entries={data.challanEntries} type="challans" />
+                {data.challanEntries?.length === 0 ? (
+                  <p style={{ fontSize:11, color:'var(--text-muted)', textAlign:'center', padding:'10px 0' }}>No challans paid this month</p>
+                ) : (
+                  <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                    {data.challanEntries.map(e => (
+                      <div key={String(e.id)} style={{
+                        display:'flex', alignItems:'center', gap:8,
+                        padding:'8px 11px', borderRadius:10,
+                        background:'var(--danger-dim)',
+                        border:'1px solid rgba(220,38,38,0.15)',
+                      }}>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <p style={{ fontSize:11, fontWeight:800, fontFamily:'var(--font-mono)', color:'var(--danger)' }}>{e.plateNumber}</p>
+                          <p style={{ fontSize:9, color:'var(--text-muted)', marginTop:1 }}>
+                            {e.offence || 'Challan'}
+                            {e.issuedAt ? ` · issued ${new Date(e.issuedAt).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'2-digit' })}` : ''}
+                          </p>
+                        </div>
+                        <div style={{ textAlign:'right', flexShrink:0 }}>
+                          <p style={{ fontSize:12, fontWeight:800, color:'var(--danger)' }}>₹{fmt(e.amount, 0)}</p>
+                          <p style={{ fontSize:8, color:'var(--text-muted)', marginTop:1 }}>
+                            paid {new Date(e.paidAt).toLocaleDateString('en-IN', { day:'numeric', month:'short' })}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -459,6 +491,45 @@ export default function ExpenseBreakdown({ year, month, onBack }) {
                   </span>
                 </div>
                 <EntryList entries={data.serviceEntries} type="services" />
+              </div>
+            )}
+
+            {/* ── EMIs tab ─────────────────────────────────────── */}
+            {tab === 'emis' && (
+              <div>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+                  <p style={{ fontSize:12, fontWeight:800, color:'var(--text-primary)' }}>
+                    EMIs approved this month
+                  </p>
+                  <span style={{ fontSize:11, fontWeight:800, color:'var(--accent)' }}>
+                    ₹{fmt(s.emi ?? 0, 0)} total
+                  </span>
+                </div>
+                {!data.emiEntries?.length ? (
+                  <p style={{ fontSize:11, color:'var(--text-muted)', textAlign:'center', padding:'10px 0' }}>No EMI payments approved this month</p>
+                ) : (
+                  <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                    {data.emiEntries.map(e => (
+                      <div key={String(e.id)} style={{
+                        display:'flex', alignItems:'center', gap:8,
+                        padding:'8px 11px', borderRadius:10,
+                        background:'var(--accent-dim)',
+                        border:'1px solid rgba(249,115,22,0.15)',
+                      }}>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <p style={{ fontSize:11, fontWeight:800, fontFamily:'var(--font-mono)', color:'var(--accent)' }}>{e.plateNumber}</p>
+                          <p style={{ fontSize:9, color:'var(--text-muted)', marginTop:1 }}>{e.lenderName} · EMI</p>
+                        </div>
+                        <div style={{ textAlign:'right', flexShrink:0 }}>
+                          <p style={{ fontSize:12, fontWeight:800, color:'var(--accent)' }}>₹{fmt(e.amount, 0)}</p>
+                          <p style={{ fontSize:8, color:'var(--text-muted)', marginTop:1 }}>
+                            {new Date(e.paidAt).toLocaleDateString('en-IN', { day:'numeric', month:'short' })}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </>
