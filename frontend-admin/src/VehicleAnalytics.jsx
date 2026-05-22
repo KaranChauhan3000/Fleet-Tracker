@@ -956,7 +956,8 @@ export default function VehicleAnalyticsPage({ vehicleId, onBack, users, toast, 
 
 function EfficiencyBrowserCard({ summary: s, perFill, trendColor, TrendIcon, thisMonthEfficiency }) {
   // fills sorted newest-first (perFill from backend is oldest-first)
-  const fills = [...(perFill || [])].reverse().filter(f => f.efficiency != null);
+  // Keep ALL fills — don't filter out null efficiency ones, or numbering breaks
+  const fills = [...(perFill || [])].reverse();
   // idx=0 means "This Month" summary view; idx=1..N means individual fills
   const [idx, setIdx] = useState(0);
 
@@ -1004,7 +1005,7 @@ function EfficiencyBrowserCard({ summary: s, perFill, trendColor, TrendIcon, thi
           <Activity size={13} color="#A78BFA" />
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', flex: 1 }}>
-          {isMonthView ? 'Avg Efficiency' : `Fill #${fills.length - fillIdx} of ${fills.length}`}
+          {isMonthView ? 'Avg Efficiency' : `Fill #${fills.length - fillIdx} of ${fills.length}${fill?.efficiency == null ? ' (no avg yet)' : ''}`}
         </p>
         {/* Nav arrows */}
         <div style={{ display: 'flex', gap: 4 }}>
@@ -1058,10 +1059,10 @@ function EfficiencyBrowserCard({ summary: s, perFill, trendColor, TrendIcon, thi
             background: idx === 0 ? '#A78BFA' : 'var(--border)',
             transition: 'width 0.2s ease',
           }} />
-          {fills.slice(0, 12).map((_, i) => (
+          {fills.map((f, i) => (
             <div key={i} style={{
               width: idx === i + 1 ? 14 : 5, height: 5, borderRadius: 3,
-              background: idx === i + 1 ? effColor : 'var(--border)',
+              background: idx === i + 1 ? (f.efficiency != null ? effColor : 'var(--text-muted)') : 'var(--border)',
               transition: 'width 0.2s ease',
             }} />
           ))}
