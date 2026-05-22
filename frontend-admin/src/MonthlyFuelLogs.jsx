@@ -109,11 +109,11 @@ function LogCard({ log, serial, onRefresh, onEdit, toast, onNavigate }) {
           {serial != null && (
             <div style={{
               position: 'absolute', top: -6, left: -6,
-              width: 18, height: 18, borderRadius: 6,
-              background: 'var(--bg-card)', border: '1.5px solid var(--border)',
+              width: 20, height: 20, borderRadius: 6,
+              background: 'rgba(139,92,246,0.15)', border: '1.5px solid rgba(139,92,246,0.5)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <span style={{ fontSize: 9, fontWeight: 900, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+              <span style={{ fontSize: 9, fontWeight: 900, color: '#8B5CF6', fontFamily: 'var(--font-mono)' }}>
                 {serial}
               </span>
             </div>
