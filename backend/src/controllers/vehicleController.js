@@ -260,6 +260,7 @@ exports.getVehicleAnalytics = async (req, res, next) => {
       vehicle: {
         id: vehicle._id, plateNumber: vehicle.plateNumber, make: vehicle.make,
         model: vehicle.model, year: vehicle.year, fuelType: vehicle.fuelType, status: vehicle.status,
+        assignedUserId:     vehicle.assignedUserId     ?? null,
         pollutionExpiry:    vehicle.pollutionExpiry    ?? null,
         insuranceExpiry:    vehicle.insuranceExpiry    ?? null,
       },
