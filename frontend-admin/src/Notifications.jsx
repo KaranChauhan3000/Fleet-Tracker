@@ -13,25 +13,33 @@ const alertStyles = `
 `;
 
 function TenBar({ daysLeft, isExpired }) {
+  const days = isExpired ? 0 : Math.max(0, Math.min(daysLeft, 10));
+  const activeStart = 10 - days;
+  const shouldBlink = !isExpired && days > 0 && days <= 5;
+
   const getColor = (i) => {
-    const days = isExpired ? 0 : Math.max(0, Math.min(daysLeft, 10));
-    const activeStart = 10 - days;
-    if (i < activeStart) return 'var(--danger)';
-    const posFromRight = 9 - i;
-    if (posFromRight <= 1) return 'var(--success)';
-    if (posFromRight <= 4) return 'var(--warning)';
-    return 'var(--danger)';
+    if (i < activeStart) return null;
+    if (days >= 6) return 'var(--success)';
+    if (i >= 7) return 'var(--danger)';
+    return 'var(--success)';
   };
+
   return (
     <div style={{ display: 'flex', gap: 3, marginTop: 6 }}>
-      {Array.from({ length: 10 }, (_, i) => (
-        <div key={i} style={{
-          flex: 1, height: 6, borderRadius: 3,
-          background: getColor(i), opacity: 0.85, transition: 'background 0.3s',
-          animation: (isExpired || daysLeft <= 2) && getColor(i) === 'var(--danger)'
-            ? 'urgentBlink 1.2s ease-in-out infinite' : 'none',
-        }} />
-      ))}
+      {Array.from({ length: 10 }, (_, i) => {
+        const color = getColor(i);
+        const isEmpty = color === null;
+        return (
+          <div key={i} style={{
+            flex: 1, height: 6, borderRadius: 3,
+            background: isEmpty ? 'rgba(150,150,150,0.18)' : color,
+            opacity: isEmpty ? 1 : 0.88,
+            transition: 'background 0.3s',
+            animation: shouldBlink && !isEmpty
+              ? 'urgentBlink 1.2s ease-in-out infinite' : 'none',
+          }} />
+        );
+      })}
     </div>
   );
 }
