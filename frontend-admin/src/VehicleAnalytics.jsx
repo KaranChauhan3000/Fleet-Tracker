@@ -291,9 +291,8 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
   const [stats, setStats] = useState(null);
   const [editSheet, setEditSheet] = useState(null);
 
-  // When month/year filter changes, reset to page 1 and reload
-  useEffect(() => { setPage(1); }, [filterYear, filterMonth]);
-  useEffect(() => { loadLogs(page); }, [page, filterYear, filterMonth]);
+  // Single effect — always pass year/month explicitly to avoid stale closures
+  useEffect(() => { loadLogs(page, filterYear, filterMonth); }, [page, filterYear, filterMonth]);
 
   function buildDateRange(year, month) {
     if (year == null || month == null) return {};
@@ -306,30 +305,35 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
     };
   }
 
-  function buildPath1(p) {
-    const range = buildDateRange(filterYear, filterMonth);
+  function buildPath(p, yr, mo) {
+    const range = buildDateRange(yr, mo);
     let path = `/admin/fuel-logs?vehicleId=${vehicleId}&page=${p}&limit=${LOG_LIMIT}`;
     if (range.from) path += `&from=${range.from}&to=${range.to}`;
     return path;
   }
 
   function goMonth(delta) {
+    let newYear, newMonth;
     if (filterYear == null) {
-      // switching from "all" to current month + delta
       const d = new Date(now.getFullYear(), now.getMonth() + delta, 1);
-      setFilterYear(d.getFullYear()); setFilterMonth(d.getMonth());
+      newYear = d.getFullYear(); newMonth = d.getMonth();
     } else {
       const d = new Date(filterYear, filterMonth + delta, 1);
-      setFilterYear(d.getFullYear()); setFilterMonth(d.getMonth());
+      newYear = d.getFullYear(); newMonth = d.getMonth();
     }
+    setFilterYear(newYear);
+    setFilterMonth(newMonth);
+    setPage(1);
+    // call directly with explicit values — no stale closure
+    loadLogs(1, newYear, newMonth);
   }
 
   const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const isCurrentMonth = filterYear === now.getFullYear() && filterMonth === now.getMonth();
   const isFuture = filterYear != null && (filterYear > now.getFullYear() || (filterYear === now.getFullYear() && filterMonth > now.getMonth()));
 
-  async function loadLogs(p) {
-    const path1 = buildPath1(p);
+  async function loadLogs(p, yr = filterYear, mo = filterMonth) {
+    const path1 = buildPath(p, yr, mo);
     const path2 = `/admin/vehicles/${vehicleId}/fuel-logs?limit=1`;
     // Show cached instantly — validate shape to avoid corrupted data blanking the page
     const cached = pcGet(path1);
@@ -366,7 +370,7 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
     try {
       await api.delete(`/admin/fuel-logs/${logId}`);
       toast('Deleted — calculations updated ✓', 'success');
-      loadLogs(page);
+      loadLogs(page, filterYear, filterMonth);
       onRefreshAnalytics();
     } catch (err) { toast(err.message, 'error'); }
   }
@@ -497,7 +501,7 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
         <EditFuelLogSheet
           log={editSheet}
           onClose={() => setEditSheet(null)}
-          onSaved={() => { setEditSheet(null); loadLogs(page); onRefreshAnalytics(); }}
+          onSaved={() => { setEditSheet(null); loadLogs(page, filterYear, filterMonth); onRefreshAnalytics(); }}
           toast={toast}
         />
       )}
