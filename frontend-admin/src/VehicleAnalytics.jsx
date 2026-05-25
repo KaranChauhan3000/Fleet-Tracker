@@ -277,7 +277,13 @@ function effLabel(eff) {
   return 'Poor';
 }
 
-function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics }) {
+function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, initialMonth }) {
+  const now = new Date();
+  const initYear  = initialMonth ? initialMonth.year  : null;
+  const initMonth = initialMonth ? initialMonth.month : null;
+
+  const [filterYear,  setFilterYear]  = useState(initYear);
+  const [filterMonth, setFilterMonth] = useState(initMonth); // 0-indexed (JS Date)
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -285,10 +291,45 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics }) {
   const [stats, setStats] = useState(null);
   const [editSheet, setEditSheet] = useState(null);
 
-  useEffect(() => { loadLogs(page); }, [page]);
+  // When month/year filter changes, reset to page 1 and reload
+  useEffect(() => { setPage(1); }, [filterYear, filterMonth]);
+  useEffect(() => { loadLogs(page); }, [page, filterYear, filterMonth]);
+
+  function buildDateRange(year, month) {
+    if (year == null || month == null) return {};
+    const from = new Date(year, month, 1);
+    const to   = new Date(year, month + 1, 0); // last day of month
+    const pad  = n => String(n).padStart(2, '0');
+    return {
+      from: `${from.getFullYear()}-${pad(from.getMonth() + 1)}-01`,
+      to:   `${to.getFullYear()}-${pad(to.getMonth() + 1)}-${pad(to.getDate())}`,
+    };
+  }
+
+  function buildPath1(p) {
+    const range = buildDateRange(filterYear, filterMonth);
+    let path = `/admin/fuel-logs?vehicleId=${vehicleId}&page=${p}&limit=${LOG_LIMIT}`;
+    if (range.from) path += `&from=${range.from}&to=${range.to}`;
+    return path;
+  }
+
+  function goMonth(delta) {
+    if (filterYear == null) {
+      // switching from "all" to current month + delta
+      const d = new Date(now.getFullYear(), now.getMonth() + delta, 1);
+      setFilterYear(d.getFullYear()); setFilterMonth(d.getMonth());
+    } else {
+      const d = new Date(filterYear, filterMonth + delta, 1);
+      setFilterYear(d.getFullYear()); setFilterMonth(d.getMonth());
+    }
+  }
+
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const isCurrentMonth = filterYear === now.getFullYear() && filterMonth === now.getMonth();
+  const isFuture = filterYear != null && (filterYear > now.getFullYear() || (filterYear === now.getFullYear() && filterMonth > now.getMonth()));
 
   async function loadLogs(p) {
-    const path1 = `/admin/fuel-logs?vehicleId=${vehicleId}&page=${p}&limit=${LOG_LIMIT}`;
+    const path1 = buildPath1(p);
     const path2 = `/admin/vehicles/${vehicleId}/fuel-logs?limit=1`;
     // Show cached instantly — validate shape to avoid corrupted data blanking the page
     const cached = pcGet(path1);
@@ -335,6 +376,49 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
+      {/* Month navigator */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-elevated)', borderRadius: 12, padding: '8px 12px' }}>
+        <button
+          onClick={() => goMonth(-1)}
+          className="btn-icon"
+          style={{ width: 30, height: 30, flexShrink: 0 }}
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+          {filterYear != null ? (
+            <>
+              <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>
+                {MONTH_NAMES[filterMonth]} {filterYear}
+              </span>
+              {isCurrentMonth && (
+                <span style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 700 }}>This Month</span>
+              )}
+            </>
+          ) : (
+            <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>All Time</span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {filterYear != null && !isCurrentMonth && (
+            <button
+              onClick={() => { setFilterYear(now.getFullYear()); setFilterMonth(now.getMonth()); }}
+              style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', border: 'none', borderRadius: 6, padding: '3px 7px', cursor: 'pointer' }}
+            >
+              Today
+            </button>
+          )}
+          <button
+            onClick={() => goMonth(1)}
+            className="btn-icon"
+            disabled={isFuture}
+            style={{ width: 30, height: 30, flexShrink: 0, opacity: isFuture ? 0.3 : 1 }}
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
+
       {/* Stats strip */}
       {stats && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8 }}>
@@ -374,8 +458,8 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics }) {
       ) : logs.length === 0 ? (
         <div className="empty-state" style={{ padding: 32 }}>
           <Fuel size={36} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
-          <p className="empty-title">No fuel logs yet</p>
-          <p className="empty-desc">Use the Add Log button above to add entries</p>
+          <p className="empty-title">{filterYear != null ? `No logs in ${MONTH_NAMES[filterMonth]} ${filterYear}` : 'No fuel logs yet'}</p>
+          <p className="empty-desc">{filterYear != null ? 'Try a different month or add a new log above' : 'Use the Add Log button above to add entries'}</p>
         </div>
       ) : (
         <>
@@ -557,6 +641,7 @@ export default function VehicleAnalyticsPage({ vehicleId, onBack, users, toast, 
   const [loading, setLoading] = useState(true);
   const [logSheet, setLogSheet] = useState(false);
   const [tab, setTab]         = useState('analytics');
+  const [logsInitialMonth, setLogsInitialMonth] = useState(null);
   const [allUsers, setAllUsers] = useState(users || []);
 
   useEffect(() => {
@@ -900,7 +985,7 @@ export default function VehicleAnalyticsPage({ vehicleId, onBack, users, toast, 
                 />
                 <MetricCard label="Fuel Spend" value={fmtRs(s.recentCost)} sub="this month" icon={<DollarSign size={13} color="var(--success)" />} accent="var(--success-dim)" />
                 <MetricCard label="KM Driven" value={s.recentKm > 0 ? `${fmt(s.recentKm, 0)} km` : '—'} sub="this month" icon={<Gauge size={13} color="var(--accent-light)" />} accent="var(--accent-dim)" />
-                <MetricCard label="Fuel Logs" value={s.recentFills} sub="entries this month" icon={<Fuel size={13} color="var(--warning)" />} accent="var(--warning-dim)" onClick={() => setTab('logs')} />
+                <MetricCard label="Fuel Logs" value={s.recentFills} sub="entries this month" icon={<Fuel size={13} color="var(--warning)" />} accent="var(--warning-dim)" onClick={() => { const now = new Date(); setLogsInitialMonth({ year: now.getFullYear(), month: now.getMonth() }); setTab('logs'); }} />
               </div>
             </div>
 
@@ -944,6 +1029,7 @@ export default function VehicleAnalyticsPage({ vehicleId, onBack, users, toast, 
             users={allUsers}
             toast={toast}
             onRefreshAnalytics={load}
+            initialMonth={logsInitialMonth}
           />
         )}
 
