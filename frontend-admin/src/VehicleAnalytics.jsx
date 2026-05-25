@@ -290,28 +290,11 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics }) {
   async function loadLogs(p) {
     const path1 = `/admin/fuel-logs?vehicleId=${vehicleId}&page=${p}&limit=${LOG_LIMIT}`;
     const path2 = `/admin/vehicles/${vehicleId}/fuel-logs?limit=1`;
-    // Show cached instantly — validate shape to avoid corrupted data blanking the page
-    const cached = pcGet(path1);
-    if (cached && cached.data && Array.isArray(cached.data.data)) {
-      setLogs(cached.data.data || []); setTotal(cached.data.total || 0);
-      setLoading(false);
-      // Refresh in background only if stale
-      if (cached.stale) {
-        Promise.all([
-          api.fresh(path1),
-          p === 1 ? api.fresh(path2) : Promise.resolve(null),
-        ]).then(([logsRes, statsRes]) => {
-          setLogs(logsRes.data || []); setTotal(logsRes.total || 0);
-          if (statsRes) setStats(statsRes.stats || null);
-        }).catch(() => {});
-      }
-      return;
-    }
     setLoading(true);
     try {
       const [logsRes, statsRes] = await Promise.all([
-        api.get(path1),
-        p === 1 ? api.get(path2) : Promise.resolve(null),
+        api.fresh(path1),
+        p === 1 ? api.fresh(path2) : Promise.resolve(null),
       ]);
       setLogs(logsRes.data || []);
       setTotal(logsRes.total || 0);
