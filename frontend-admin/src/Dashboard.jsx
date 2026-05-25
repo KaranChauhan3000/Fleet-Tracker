@@ -29,25 +29,39 @@ const alertStyles = `
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 function TenBar({ daysLeft, isExpired }) {
+  // days = how many dots are "active" (lit), capped at 10
+  const days = isExpired ? 0 : Math.max(0, Math.min(daysLeft, 10));
+  // dots 0..(activeStart-1) are grey/empty (time already consumed)
+  const activeStart = 10 - days;
+  // blink the active dots only when 5 or fewer days remain (and not yet expired)
+  const shouldBlink = !isExpired && days > 0 && days <= 5;
+
   const getColor = (i) => {
-    const days = isExpired ? 0 : Math.max(0, Math.min(daysLeft, 10));
-    const activeStart = 10 - days;
-    if (i < activeStart) return 'var(--danger)';
-    const posFromRight = 9 - i;
-    if (posFromRight <= 1) return 'var(--success)';
-    if (posFromRight <= 4) return 'var(--warning)';
-    return 'var(--danger)';
+    // consumed slot → grey/empty
+    if (i < activeStart) return null;
+    // 6-10 days left → all active dots are green (safe zone)
+    if (days >= 6) return 'var(--success)';
+    // 1-5 days left → rightmost 3 slots (index 7,8,9) are red, the rest green
+    if (i >= 7) return 'var(--danger)';
+    return 'var(--success)';
   };
+
   return (
     <div style={{ display: 'flex', gap: 3 }}>
-      {Array.from({ length: 10 }, (_, i) => (
-        <div key={i} style={{
-          flex: 1, height: 6, borderRadius: 3,
-          background: getColor(i), opacity: 0.85, transition: 'background 0.3s',
-          animation: (isExpired || daysLeft <= 2) && getColor(i) === 'var(--danger)'
-            ? 'urgentBlink 1.2s ease-in-out infinite' : 'none',
-        }} />
-      ))}
+      {Array.from({ length: 10 }, (_, i) => {
+        const color = getColor(i);
+        const isEmpty = color === null;
+        return (
+          <div key={i} style={{
+            flex: 1, height: 6, borderRadius: 3,
+            background: isEmpty ? 'rgba(150,150,150,0.18)' : color,
+            opacity: isEmpty ? 1 : 0.88,
+            transition: 'background 0.3s',
+            animation: shouldBlink && !isEmpty
+              ? 'urgentBlink 1.2s ease-in-out infinite' : 'none',
+          }} />
+        );
+      })}
     </div>
   );
 }
