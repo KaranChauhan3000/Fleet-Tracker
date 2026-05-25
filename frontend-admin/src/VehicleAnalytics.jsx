@@ -277,76 +277,58 @@ function effLabel(eff) {
   return 'Poor';
 }
 
-function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, initialMonth }) {
+function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, initialMonth, onTotalChange }) {
   const now = new Date();
-  const initYear  = initialMonth ? initialMonth.year  : null;
-  const initMonth = initialMonth ? initialMonth.month : null;
 
-  const [filterYear,  setFilterYear]  = useState(initYear);
-  const [filterMonth, setFilterMonth] = useState(initMonth); // 0-indexed (JS Date)
+  // Single atomic filter state — prevents any race condition between separate year/month/page states
+  const [filter, setFilter] = useState({
+    year:  initialMonth ? initialMonth.year  : null,
+    month: initialMonth ? initialMonth.month : null,
+    page:  1,
+  });
   const [logs, setLogs] = useState([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [editSheet, setEditSheet] = useState(null);
 
-  // Single effect — always pass year/month explicitly to avoid stale closures
-  useEffect(() => { loadLogs(page, filterYear, filterMonth); }, [page, filterYear, filterMonth]);
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const isCurrentMonth = filter.year === now.getFullYear() && filter.month === now.getMonth();
+  const isFuture = filter.year != null && (
+    filter.year > now.getFullYear() ||
+    (filter.year === now.getFullYear() && filter.month > now.getMonth())
+  );
 
-  function buildDateRange(year, month) {
-    if (year == null || month == null) return {};
-    const from = new Date(year, month, 1);
-    const to   = new Date(year, month + 1, 0); // last day of month
-    const pad  = n => String(n).padStart(2, '0');
-    return {
-      from: `${from.getFullYear()}-${pad(from.getMonth() + 1)}-01`,
-      to:   `${to.getFullYear()}-${pad(to.getMonth() + 1)}-${pad(to.getDate())}`,
-    };
-  }
+  // One effect, one source of truth — fires exactly once per filter change
+  useEffect(() => {
+    fetchLogs(filter);
+  }, [filter]);
 
-  function buildPath(p, yr, mo) {
-    const range = buildDateRange(yr, mo);
-    let path = `/admin/fuel-logs?vehicleId=${vehicleId}&page=${p}&limit=${LOG_LIMIT}`;
-    if (range.from) path += `&from=${range.from}&to=${range.to}`;
+  function buildPath(f) {
+    let path = `/admin/fuel-logs?vehicleId=${vehicleId}&page=${f.page}&limit=${LOG_LIMIT}`;
+    if (f.year != null && f.month != null) {
+      const pad = n => String(n).padStart(2, '0');
+      const lastDay = new Date(f.year, f.month + 1, 0).getDate();
+      path += `&from=${f.year}-${pad(f.month + 1)}-01&to=${f.year}-${pad(f.month + 1)}-${pad(lastDay)}`;
+    }
     return path;
   }
 
-  function goMonth(delta) {
-    let newYear, newMonth;
-    if (filterYear == null) {
-      const d = new Date(now.getFullYear(), now.getMonth() + delta, 1);
-      newYear = d.getFullYear(); newMonth = d.getMonth();
-    } else {
-      const d = new Date(filterYear, filterMonth + delta, 1);
-      newYear = d.getFullYear(); newMonth = d.getMonth();
-    }
-    setFilterYear(newYear);
-    setFilterMonth(newMonth);
-    setPage(1);
-    // call directly with explicit values — no stale closure
-    loadLogs(1, newYear, newMonth);
-  }
-
-  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const isCurrentMonth = filterYear === now.getFullYear() && filterMonth === now.getMonth();
-  const isFuture = filterYear != null && (filterYear > now.getFullYear() || (filterYear === now.getFullYear() && filterMonth > now.getMonth()));
-
-  async function loadLogs(p, yr = filterYear, mo = filterMonth) {
-    const path1 = buildPath(p, yr, mo);
+  async function fetchLogs(f) {
+    const path1 = buildPath(f);
     const path2 = `/admin/vehicles/${vehicleId}/fuel-logs?limit=1`;
-    // Show cached instantly — validate shape to avoid corrupted data blanking the page
     const cached = pcGet(path1);
     if (cached && cached.data && Array.isArray(cached.data.data)) {
       setLogs(cached.data.data || []); setTotal(cached.data.total || 0);
+      if (onTotalChange) onTotalChange(cached.data.total || 0);
       setLoading(false);
-      // Refresh in background only if stale
       if (cached.stale) {
         Promise.all([
           api.fresh(path1),
-          p === 1 ? api.fresh(path2) : Promise.resolve(null),
+          f.page === 1 ? api.fresh(path2) : Promise.resolve(null),
         ]).then(([logsRes, statsRes]) => {
           setLogs(logsRes.data || []); setTotal(logsRes.total || 0);
+          if (onTotalChange) onTotalChange(logsRes.total || 0);
           if (statsRes) setStats(statsRes.stats || null);
         }).catch(() => {});
       }
@@ -356,13 +338,30 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
     try {
       const [logsRes, statsRes] = await Promise.all([
         api.get(path1),
-        p === 1 ? api.get(path2) : Promise.resolve(null),
+        f.page === 1 ? api.get(path2) : Promise.resolve(null),
       ]);
       setLogs(logsRes.data || []);
       setTotal(logsRes.total || 0);
+      if (onTotalChange) onTotalChange(logsRes.total || 0);
       if (statsRes) setStats(statsRes.stats || null);
     } catch (err) { toast(err.message, 'error'); }
     finally { setLoading(false); }
+  }
+
+  function goMonth(delta) {
+    const base = filter.year == null
+      ? { year: now.getFullYear(), month: now.getMonth() }
+      : { year: filter.year, month: filter.month };
+    const d = new Date(base.year, base.month + delta, 1);
+    setFilter({ year: d.getFullYear(), month: d.getMonth(), page: 1 });
+  }
+
+  function goToday() {
+    setFilter({ year: now.getFullYear(), month: now.getMonth(), page: 1 });
+  }
+
+  function goPage(p) {
+    setFilter(f => ({ ...f, page: p }));
   }
 
   async function deleteLog(logId) {
@@ -370,7 +369,7 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
     try {
       await api.delete(`/admin/fuel-logs/${logId}`);
       toast('Deleted — calculations updated ✓', 'success');
-      loadLogs(page, filterYear, filterMonth);
+      fetchLogs(filter);
       onRefreshAnalytics();
     } catch (err) { toast(err.message, 'error'); }
   }
@@ -390,10 +389,10 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
           <ChevronLeft size={16} />
         </button>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-          {filterYear != null ? (
+          {filter.year != null ? (
             <>
               <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-primary)' }}>
-                {MONTH_NAMES[filterMonth]} {filterYear}
+                {MONTH_NAMES[filter.month]} {filter.year}
               </span>
               {isCurrentMonth && (
                 <span style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 700 }}>This Month</span>
@@ -404,9 +403,9 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
           )}
         </div>
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          {filterYear != null && !isCurrentMonth && (
+          {filter.year != null && !isCurrentMonth && (
             <button
-              onClick={() => { setFilterYear(now.getFullYear()); setFilterMonth(now.getMonth()); }}
+              onClick={goToday}
               style={{ fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-dim)', border: 'none', borderRadius: 6, padding: '3px 7px', cursor: 'pointer' }}
             >
               Today
@@ -448,7 +447,7 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
           </p>
           {totalPages > 1 && (
             <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              Page {page}/{totalPages}
+              Page {filter.page}/{totalPages}
             </p>
           )}
         </div>
@@ -462,8 +461,8 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
       ) : logs.length === 0 ? (
         <div className="empty-state" style={{ padding: 32 }}>
           <Fuel size={36} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
-          <p className="empty-title">{filterYear != null ? `No logs in ${MONTH_NAMES[filterMonth]} ${filterYear}` : 'No fuel logs yet'}</p>
-          <p className="empty-desc">{filterYear != null ? 'Try a different month or add a new log above' : 'Use the Add Log button above to add entries'}</p>
+          <p className="empty-title">{filter.year != null ? `No logs in ${MONTH_NAMES[filter.month]} ${filter.year}` : 'No fuel logs yet'}</p>
+          <p className="empty-desc">{filter.year != null ? 'Try a different month or add a new log above' : 'Use the Add Log button above to add entries'}</p>
         </div>
       ) : (
         <>
@@ -482,13 +481,13 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
           {totalPages > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                {(page - 1) * LOG_LIMIT + 1}–{Math.min(page * LOG_LIMIT, total)} of {total}
+                {(filter.page - 1) * LOG_LIMIT + 1}–{Math.min(filter.page * LOG_LIMIT, total)} of {total}
               </span>
               <div style={{ display: 'flex', gap: 6 }}>
-                <button className="btn btn-ghost btn-sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)} style={{ padding: '6px 12px' }}>
+                <button className="btn btn-ghost btn-sm" disabled={filter.page <= 1} onClick={() => goPage(filter.page - 1)} style={{ padding: '6px 12px' }}>
                   <ChevronLeft size={14} /> Prev
                 </button>
-                <button className="btn btn-ghost btn-sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} style={{ padding: '6px 12px' }}>
+                <button className="btn btn-ghost btn-sm" disabled={filter.page >= totalPages} onClick={() => goPage(filter.page + 1)} style={{ padding: '6px 12px' }}>
                   Next <ChevronRight size={14} />
                 </button>
               </div>
@@ -501,7 +500,7 @@ function FuelLogsTab({ vehicleId, vehicle, users, toast, onRefreshAnalytics, ini
         <EditFuelLogSheet
           log={editSheet}
           onClose={() => setEditSheet(null)}
-          onSaved={() => { setEditSheet(null); loadLogs(page, filterYear, filterMonth); onRefreshAnalytics(); }}
+          onSaved={() => { setEditSheet(null); fetchLogs(filter); onRefreshAnalytics(); }}
           toast={toast}
         />
       )}
@@ -646,6 +645,7 @@ export default function VehicleAnalyticsPage({ vehicleId, onBack, users, toast, 
   const [logSheet, setLogSheet] = useState(false);
   const [tab, setTab]         = useState('analytics');
   const [logsInitialMonth, setLogsInitialMonth] = useState(null);
+  const [logsFilteredTotal, setLogsFilteredTotal] = useState(null); // updated by FuelLogsTab
   const [allUsers, setAllUsers] = useState(users || []);
 
   useEffect(() => {
@@ -753,7 +753,7 @@ export default function VehicleAnalyticsPage({ vehicleId, onBack, users, toast, 
         <div style={{ display: 'flex', background: 'var(--bg-elevated)', borderRadius: 10, padding: 3, gap: 2 }}>
           {[
             { key: 'analytics', icon: <BarChart2 size={13} />, label: 'Analytics' },
-            { key: 'logs',      icon: <List size={13} />,     label: `Fuel Logs${s.totalFills > 0 ? ` (${s.totalFills})` : ''}` },
+            { key: 'logs',      icon: <List size={13} />,     label: `Fuel Logs${tab === 'logs' ? (logsFilteredTotal != null ? ` (${logsFilteredTotal})` : '') : (s.recentFills > 0 ? ` (${s.recentFills})` : '')}` },
             { key: 'docs',      icon: <FileText size={13} />, label: 'Documents' },
           ].map(t => (
             <button
@@ -1034,6 +1034,7 @@ export default function VehicleAnalyticsPage({ vehicleId, onBack, users, toast, 
             toast={toast}
             onRefreshAnalytics={load}
             initialMonth={logsInitialMonth}
+            onTotalChange={setLogsFilteredTotal}
           />
         )}
 
