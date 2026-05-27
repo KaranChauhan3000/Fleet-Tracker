@@ -19,11 +19,9 @@ const companySchema = new mongoose.Schema({
   membership: {
     plan:         { type: String, enum: ['monthly', 'yearly', null], default: null },
     expiresAt:    { type: Date,   default: null },
-    vehicleLimit: { type: Number, default: 50 },  // default 50, Karo India can increase
-    // Razorpay records (never sent to frontend)
+    vehicleLimit: { type: Number, default: 50 },
     razorpayPaymentId: { type: String, default: '' },
     razorpayOrderId:   { type: String, default: '' },
-    // Limit increase request
     limitRequest: {
       pending:     { type: Boolean, default: false },
       requested:   { type: Number,  default: 0 },
@@ -34,14 +32,31 @@ const companySchema = new mongoose.Schema({
     },
   },
 
-  // ── Company-wide Office Timing ─────────────────────────────────────────────
-  // Default office hours for this company — applied to all users who do not
-  // have their own per-user timing configured.
+  // ── Company-wide Office Timing & Tracking Config ───────────────────────────
+  // Admin sets the office window + buffer windows + intervals.
+  // The mobile app fetches this config and uses it to decide WHEN to ping.
   officeTiming: {
     enabled:   { type: Boolean, default: false },
-    startTime: { type: String, default: '09:00' },
-    endTime:   { type: String, default: '18:00' },
-    overrides: {           // per-day overrides, keys "0"–"6" (Sun=0)
+    startTime: { type: String,  default: '09:00' }, // "HH:MM" 24-hour
+    endTime:   { type: String,  default: '18:00' }, // "HH:MM" 24-hour
+
+    // ── Tracking intervals ──────────────────────────────────────────────────
+    // How often to record location during office hours (in minutes).
+    // Default: 30 min  →  2 pings/hour during work time.
+    trackingIntervalMin: { type: Number, default: 30, min: 5, max: 120 },
+
+    // ── Buffer windows ──────────────────────────────────────────────────────
+    // Grace period BEFORE office start where we ping more often (e.g. commute).
+    // bufferBeforeMin = 60  →  tracking starts 1 hour before office start.
+    bufferBeforeMin:    { type: Number, default: 60, min: 0, max: 240 },
+    // Grace period AFTER office end.
+    bufferAfterMin:     { type: Number, default: 60, min: 0, max: 240 },
+    // Ping interval during BOTH buffer windows (should be < trackingIntervalMin).
+    // Default: 10 min  →  6 pings/hour during buffer.
+    bufferIntervalMin:  { type: Number, default: 10, min: 5, max: 60  },
+
+    // Per-day overrides, keys "0"–"6" (Sun=0)
+    overrides: {
       type: Map,
       of: dayTimingSchema,
       default: {},
