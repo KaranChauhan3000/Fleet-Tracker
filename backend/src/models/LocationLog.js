@@ -7,6 +7,7 @@ const locationLogSchema = new mongoose.Schema({
   lng:        { type: Number, required: true },
   accuracy:   { type: Number, default: null },   // metres, from Geolocation API
   address:    { type: String, default: '' },      // optional reverse-geocoded label
+  battery:    { type: Number, default: null },     // 0–100 percentage, null if unavailable
   recordedAt: { type: Date,   required: true, index: true },
 }, { timestamps: false });
 
