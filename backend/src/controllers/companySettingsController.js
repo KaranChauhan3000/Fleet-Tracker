@@ -69,7 +69,7 @@ exports.updateCompanySettings = async (req, res) => {
       }
 
       company.officeTiming = {
-        enabled:             true,
+        enabled:             officeTiming.enabled !== undefined ? !!officeTiming.enabled : true,
         startTime:           startTime || '09:00',
         endTime:             endTime   || '18:00',
         trackingIntervalMin: tInterval,
