@@ -91,7 +91,7 @@ exports.getTrackingConfig = async (req, res) => {
 // interval appropriate for that window.
 exports.logLocation = async (req, res) => {
   try {
-    const { lat, lng, accuracy, address } = req.body;
+    const { lat, lng, accuracy, address, battery } = req.body;
 
     if (lat == null || lng == null) {
       return res.status(400).json({ message: 'lat and lng are required' });
@@ -138,6 +138,7 @@ exports.logLocation = async (req, res) => {
       lng:        parseFloat(lng),
       accuracy:   accuracy != null ? parseFloat(accuracy) : null,
       address:    address   || '',
+      battery:    battery   != null ? Math.round(parseFloat(battery)) : null,
       recordedAt: now,
     });
 
@@ -245,6 +246,7 @@ exports.getTimeline = async (req, res) => {
         lng:        l.lng,
         accuracy:   l.accuracy,
         address:    l.address,
+        battery:    l.battery ?? null,
         recordedAt: l.recordedAt,
         zone,                        // 'before' | 'office' | 'after'
       };
