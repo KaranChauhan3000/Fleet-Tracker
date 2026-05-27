@@ -20,10 +20,6 @@ const insuranceCtrl  = require('../controllers/insuranceController');
 const router = express.Router();
 router.use(protect, adminOnly);
 
-// ── Membership check — blocks expired accounts ───────────────────────────
-const checkMembership = require('../middleware/checkMembership');
-router.use(checkMembership);
-
 // ── Sub-Admins (admin creating admins within same company) ───────────────────
 router.get('/admins',     subAdminCtrl.listSubAdmins);
 router.post('/admins',
