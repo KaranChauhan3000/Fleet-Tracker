@@ -199,8 +199,9 @@ exports.getVehicleAnalytics = async (req, res, next) => {
       }
     }
 
-    const recentCost = thisMonthLogs.reduce((s, l) => s + l.totalCost, 0);
-    const recentFills = thisMonthLogs.length;
+    const recentCost   = thisMonthLogs.reduce((s, l) => s + l.totalCost, 0);
+    const recentFills  = thisMonthLogs.length;
+    const recentLitres = thisMonthLogs.reduce((s, l) => s + (l.litres || 0), 0);
 
     // For trend comparison: previous month's efficiency (keep existing logic, just scoped to prev month)
     const prevLogs = allLogs.filter(l => {
@@ -285,6 +286,7 @@ exports.getVehicleAnalytics = async (req, res, next) => {
         recentCost: parseFloat(recentCost.toFixed(2)),
         recentKm: parseFloat(recentKm.toFixed(1)),
         recentFills,
+        recentLitres: parseFloat(recentLitres.toFixed(2)),
         prevAvgEfficiency: prevAvgEff,
         efficiencyTrend: avgEfficiency != null && prevAvgEff != null
           ? parseFloat((avgEfficiency - prevAvgEff).toFixed(2)) : null,
