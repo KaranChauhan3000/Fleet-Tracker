@@ -33,6 +33,7 @@ router.get('/service-alerts',  ctrl.getServiceAlerts);
 
 // ── Location tracking ─────────────────────────────────────────────────────────
 const locCtrl = require('../controllers/locationController');
+router.get('/tracking-config',   locCtrl.getTrackingConfig); // mobile fetches on login
 router.post('/location',         locCtrl.logLocation);
 router.get('/location-timeline', ctrl.getOwnTimeline);
 router.post('/fcm-token',        ctrl.registerFCMToken);
