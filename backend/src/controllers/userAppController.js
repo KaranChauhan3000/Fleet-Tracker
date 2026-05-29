@@ -342,7 +342,19 @@ exports.getOwnTimeline = async (req, res, next) => {
       return res.status(400).json({ message: 'date must be YYYY-MM-DD' });
     }
 
-    // Load company office timing
+    // 2-day retention: only today and yesterday are available
+    const today     = new Date();
+    const todayYmd  = today.toISOString().slice(0, 10);
+    const yesterday = new Date(today);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const yesterdayYmd = yesterday.toISOString().slice(0, 10);
+
+    if (dateStr !== todayYmd && dateStr !== yesterdayYmd) {
+      return res.status(400).json({
+        message: 'Only today and yesterday are available (2-day retention policy)',
+      });
+    }
+
     const company = await Company.findById(req.user.companyId).lean();
     const ot = company?.officeTiming || {};
 
@@ -362,20 +374,16 @@ exports.getOwnTimeline = async (req, res, next) => {
       activeTiming = { enabled: true, startTime: ot.startTime, endTime: ot.endTime };
     }
 
-    // Convert local office hours → UTC using timezone offset sent by frontend
-    const tzOffset = parseInt(req.query.tz) || 330; // default IST (UTC+5:30)
+    const tzOffset = parseInt(req.query.tz) || 330;
 
     function localToUTC(ds, timeStr) {
       const [h, m] = timeStr.split(':').map(Number);
       return new Date(Date.parse(`${ds}T00:00:00Z`) + (h * 60 + m - tzOffset) * 60000);
     }
 
-    const start = activeTiming
-      ? localToUTC(dateStr, activeTiming.startTime)
-      : localToUTC(dateStr, '00:00');
-    const end = activeTiming
-      ? localToUTC(dateStr, activeTiming.endTime)
-      : localToUTC(dateStr, '23:59');
+    // Query the full day — don't restrict to office window so all pings show
+    const start = localToUTC(dateStr, '00:00');
+    const end   = localToUTC(dateStr, '23:59');
 
     const logs = await LocationLog.find({
       userId:     req.user.id,
@@ -398,6 +406,7 @@ exports.getOwnTimeline = async (req, res, next) => {
         lng:        l.lng,
         accuracy:   l.accuracy,
         address:    l.address,
+        battery:    l.battery ?? null,
         recordedAt: l.recordedAt,
       })),
     });
