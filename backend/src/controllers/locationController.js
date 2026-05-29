@@ -2,63 +2,36 @@ const LocationLog = require('../models/LocationLog');
 const User        = require('../models/User');
 const Company     = require('../models/Company');
 
-// ─── Time-window helpers ──────────────────────────────────────────────────────
-// All times are UTC-based. The tzOffset (minutes east of UTC) converts local
-// office hours → UTC for comparison.
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Parse "HH:MM" → total minutes from midnight.
- */
+/** Parse "HH:MM" → total minutes from midnight. */
 function hmToMin(hm) {
-  const [h, m] = hm.split(':').map(Number);
-  return h * 60 + m;
+  const [h, m] = (hm || '00:00').split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
 }
 
 /**
- * Determine which tracking window `now` falls in, given the company config.
- * Returns one of:
- *   'office'  – inside office hours      → use trackingIntervalMin
- *   'before'  – inside buffer-before     → use bufferIntervalMin
- *   'after'   – inside buffer-after      → use bufferIntervalMin
- *   'off'     – outside all windows      → reject / skip
+ * Returns true if `now` (UTC) falls inside the office window defined by
+ * `startTime`–`endTime` for the company, after converting to local time
+ * using `tzOffset` (minutes east of UTC, e.g. 330 for IST).
  *
- * @param {Date}   now       – current UTC time
- * @param {object} ot        – company.officeTiming plain object
- * @param {number} tzOffset  – minutes east of UTC (e.g. 330 for IST)
+ * No buffers — strictly start → end as the admin configured.
  */
-function resolveWindow(now, ot, tzOffset) {
-  if (!ot?.enabled) return { zone: 'off' };
+function isInsideOfficeWindow(now, ot, tzOffset) {
+  if (!ot?.enabled) return false;
 
-  // Current time in local minutes-since-midnight
-  const localMin = ((now.getUTCHours() * 60 + now.getUTCMinutes()) + tzOffset + 1440) % 1440;
+  const utcMin   = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const localMin = (utcMin + tzOffset + 1440) % 1440;
 
-  const officeStart  = hmToMin(ot.startTime || '09:00');
-  const officeEnd    = hmToMin(ot.endTime   || '18:00');
-  const bufferBefore = ot.bufferBeforeMin ?? 60;
-  const bufferAfter  = ot.bufferAfterMin  ?? 60;
+  const start = hmToMin(ot.startTime || '09:00');
+  const end   = hmToMin(ot.endTime   || '18:00');
 
-  const windowStart  = officeStart - bufferBefore; // may go negative → handled via mod
-  const windowEnd    = officeEnd   + bufferAfter;
-
-  // Normalise negative starts
-  const normStart    = (windowStart + 1440) % 1440;
-
-  // Zones (non-wrapping — office hours never cross midnight in practice)
-  if (localMin >= officeStart && localMin < officeEnd) {
-    return { zone: 'office', intervalMin: ot.trackingIntervalMin ?? 30 };
-  }
-  if (bufferBefore > 0 && localMin >= (windowStart < 0 ? 0 : windowStart) && localMin < officeStart) {
-    return { zone: 'before', intervalMin: ot.bufferIntervalMin ?? 10 };
-  }
-  if (bufferAfter > 0 && localMin >= officeEnd && localMin < Math.min(windowEnd, 1440)) {
-    return { zone: 'after',  intervalMin: ot.bufferIntervalMin ?? 10 };
-  }
-  return { zone: 'off' };
+  return localMin >= start && localMin < end;
 }
 
 // ── GET /user/tracking-config ─────────────────────────────────────────────────
-// Mobile app fetches this on login and caches it so the background task
-// knows the correct intervals and window boundaries without needing React.
+// Mobile fetches this on login and caches it so the background task knows
+// the correct window boundaries without needing React context.
 exports.getTrackingConfig = async (req, res) => {
   try {
     const company = await Company.findById(req.user.companyId).lean();
@@ -71,13 +44,11 @@ exports.getTrackingConfig = async (req, res) => {
         : (ot.overrides || {});
 
     res.json({
-      enabled:             !!ot.enabled,
-      startTime:           ot.startTime           || '09:00',
-      endTime:             ot.endTime             || '18:00',
-      trackingIntervalMin: ot.trackingIntervalMin  ?? 30,
-      bufferBeforeMin:     ot.bufferBeforeMin      ?? 60,
-      bufferAfterMin:      ot.bufferAfterMin       ?? 60,
-      bufferIntervalMin:   ot.bufferIntervalMin    ?? 10,
+      enabled:   !!ot.enabled,
+      startTime: ot.startTime || '09:00',
+      endTime:   ot.endTime   || '18:00',
+      // Always 1-minute interval — no configurable interval exposed
+      trackingIntervalMin: 1,
       overrides,
     });
   } catch (err) {
@@ -86,9 +57,9 @@ exports.getTrackingConfig = async (req, res) => {
 };
 
 // ── POST /user/location ────────────────────────────────────────────────────────
-// Called from the user's app according to the tracking window schedule.
-// The backend validates the time window and deduplicates based on the
-// interval appropriate for that window.
+// Called every minute from the background task when inside the office window.
+// Server validates the window and deduplicates pings closer than 55 seconds
+// (accounts for scheduling jitter on both Android and iOS).
 exports.logLocation = async (req, res) => {
   try {
     const { lat, lng, accuracy, address, battery } = req.body;
@@ -97,28 +68,24 @@ exports.logLocation = async (req, res) => {
       return res.status(400).json({ message: 'lat and lng are required' });
     }
 
-    // Load company timing config
     const company = await Company.findById(req.user.companyId).lean();
-    const ot = company?.officeTiming || {};
+    const ot      = company?.officeTiming || {};
 
-    // tz offset sent by mobile app (minutes east of UTC). Default IST.
+    // tz offset sent by mobile (minutes east of UTC). Default IST (+05:30).
     const tzOffset = parseInt(req.body.tz ?? req.query.tz) || 330;
 
-    // Resolve which window we're currently in
-    const now    = new Date();
-    const window = resolveWindow(now, ot, tzOffset);
+    const now = new Date();
 
-    // If outside all tracking windows → acknowledge but don't save
-    if (window.zone === 'off') {
+    // ── Window guard ──────────────────────────────────────────────────────────
+    // Strictly inside start→end, no buffers.
+    if (!isInsideOfficeWindow(now, ot, tzOffset)) {
       return res.json({ ok: true, skipped: true, reason: 'outside-window' });
     }
 
     // ── Deduplication guard ───────────────────────────────────────────────────
-    // Allow a ping if the last saved ping for this user is older than
-    // (intervalMin - 5) minutes. The -5 gives a small grace for scheduling jitter.
-    const intervalMin   = window.intervalMin ?? 30;
-    const dedupMinutes  = Math.max(intervalMin - 5, 5);
-    const cutoff        = new Date(now.getTime() - dedupMinutes * 60 * 1000);
+    // Allow 1 ping per 55-second window to absorb scheduling jitter.
+    const DEDUP_MS = 55 * 1000;
+    const cutoff   = new Date(now.getTime() - DEDUP_MS);
 
     const recent = await LocationLog.findOne({
       userId:     req.user.id,
@@ -129,7 +96,6 @@ exports.logLocation = async (req, res) => {
     if (recent) {
       return res.json({ ok: true, id: recent._id, skipped: true, reason: 'too-soon' });
     }
-    // ─────────────────────────────────────────────────────────────────────────
 
     const log = await LocationLog.create({
       userId:     req.user.id,
@@ -142,16 +108,15 @@ exports.logLocation = async (req, res) => {
       recordedAt: now,
     });
 
-    res.json({ ok: true, id: log._id, zone: window.zone });
+    res.json({ ok: true, id: log._id });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
 // ── GET /admin/users/:id/location-timeline?date=YYYY-MM-DD ───────────────────
-// Returns all location pings for a user on a given day. The timeline now
-// includes buffer pings (before/after office) in addition to office pings,
-// so we query from bufferStart → bufferEnd instead of just officeStart → officeEnd.
+// Returns all pings for a driver on a given day. Queries the full day so even
+// if the admin changes office hours mid-day, the history still shows all pings.
 exports.getTimeline = async (req, res) => {
   try {
     const { id }  = req.params;
@@ -161,17 +126,33 @@ exports.getTimeline = async (req, res) => {
       return res.status(400).json({ message: 'date must be YYYY-MM-DD' });
     }
 
+    // Only allow querying today or yesterday (2-day window)
+    const today     = new Date();
+    const todayYmd  = today.toISOString().slice(0, 10);
+    const yesterday = new Date(today);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const yesterdayYmd = yesterday.toISOString().slice(0, 10);
+
+    if (dateStr !== todayYmd && dateStr !== yesterdayYmd) {
+      return res.status(400).json({
+        message: 'Only today and yesterday are available (2-day retention policy)',
+      });
+    }
+
     const user = await User.findOne({ _id: id, companyId: req.user.companyId }).lean();
     if (!user) return res.status(404).json({ message: 'User not found' });
 
     const company = await Company.findById(req.user.companyId).lean();
     const ot      = company?.officeTiming || {};
 
+    const tzOffset = parseInt(req.query.tz) || 330;
+
+    // Resolve per-day override
     const dayIndex  = new Date(dateStr + 'T12:00:00').getDay().toString();
     const overrides = ot.overrides instanceof Map
       ? Object.fromEntries(ot.overrides)
       : (ot.overrides || {});
-    const override  = overrides[dayIndex];
+    const override = overrides[dayIndex];
 
     let activeTiming = null;
     let isHoliday    = false;
@@ -182,75 +163,26 @@ exports.getTimeline = async (req, res) => {
       activeTiming = override;
     } else if (ot.enabled) {
       activeTiming = {
-        enabled:             true,
-        startTime:           ot.startTime,
-        endTime:             ot.endTime,
-        trackingIntervalMin: ot.trackingIntervalMin ?? 30,
-        bufferBeforeMin:     ot.bufferBeforeMin     ?? 60,
-        bufferAfterMin:      ot.bufferAfterMin      ?? 60,
-        bufferIntervalMin:   ot.bufferIntervalMin   ?? 10,
+        enabled:   true,
+        startTime: ot.startTime || '09:00',
+        endTime:   ot.endTime   || '18:00',
       };
     }
 
-    const tzOffset = parseInt(req.query.tz) || 330;
-
-    function localToUTC(dateStr, timeStr) {
+    function localToUTC(ds, timeStr) {
       const [h, m] = timeStr.split(':').map(Number);
-      return new Date(Date.parse(`${dateStr}T00:00:00Z`) + (h * 60 + m - tzOffset) * 60000);
+      return new Date(Date.parse(`${ds}T00:00:00Z`) + (h * 60 + m - tzOffset) * 60000);
     }
 
-    let start, end;
-    if (activeTiming) {
-      // Extend window to include buffer periods
-      const officeStartMin = hmToMin(activeTiming.startTime);
-      const officeEndMin   = hmToMin(activeTiming.endTime);
-      const bufBefore      = activeTiming.bufferBeforeMin ?? 60;
-      const bufAfter       = activeTiming.bufferAfterMin  ?? 60;
-
-      const bufStartMin    = officeStartMin - bufBefore;
-      const bufEndMin      = officeEndMin   + bufAfter;
-
-      // Convert to HH:MM strings (clamp to 00:00–23:59)
-      const toHHMM = (min) => {
-        const clamped = Math.max(0, Math.min(1439, min));
-        return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
-      };
-
-      start = localToUTC(dateStr, toHHMM(bufStartMin));
-      end   = localToUTC(dateStr, toHHMM(bufEndMin));
-    } else {
-      start = localToUTC(dateStr, '00:00');
-      end   = localToUTC(dateStr, '23:59');
-    }
+    // Always query the full day so no pings are dropped if admin changed timings
+    const start = localToUTC(dateStr, '00:00');
+    const end   = localToUTC(dateStr, '23:59');
 
     const logs = await LocationLog.find({
       userId:     id,
       companyId:  req.user.companyId,
       recordedAt: { $gte: start, $lte: end },
     }).sort({ recordedAt: 1 }).lean();
-
-    // Tag each log with which zone it was in (for the admin timeline view)
-    const taggedLogs = logs.map(l => {
-      let zone = 'office';
-      if (activeTiming) {
-        const localMin = ((l.recordedAt.getUTCHours() * 60 + l.recordedAt.getUTCMinutes()) + tzOffset + 1440) % 1440;
-        const oStart   = hmToMin(activeTiming.startTime);
-        const oEnd     = hmToMin(activeTiming.endTime);
-        if      (localMin < oStart) zone = 'before';
-        else if (localMin >= oEnd)  zone = 'after';
-        else                        zone = 'office';
-      }
-      return {
-        id:         l._id,
-        lat:        l.lat,
-        lng:        l.lng,
-        accuracy:   l.accuracy,
-        address:    l.address,
-        battery:    l.battery ?? null,
-        recordedAt: l.recordedAt,
-        zone,                        // 'before' | 'office' | 'after'
-      };
-    });
 
     res.json({
       user: {
@@ -259,23 +191,24 @@ exports.getTimeline = async (req, res) => {
         employeeId: user.employeeId,
         phone:      user.phone,
       },
-      date:   dateStr,
+      date: dateStr,
       timing: {
-        enabled:             !!activeTiming,
-        isHoliday:           isHoliday,
-        startTime:           activeTiming?.startTime           || null,
-        endTime:             activeTiming?.endTime             || null,
-        trackingIntervalMin: activeTiming?.trackingIntervalMin ?? 30,
-        bufferBeforeMin:     activeTiming?.bufferBeforeMin     ?? 60,
-        bufferAfterMin:      activeTiming?.bufferAfterMin      ?? 60,
-        bufferIntervalMin:   activeTiming?.bufferIntervalMin   ?? 10,
-        isOverride:          !!(override?.enabled),
+        enabled:   !!activeTiming,
+        isHoliday: isHoliday,
+        startTime: activeTiming?.startTime || null,
+        endTime:   activeTiming?.endTime   || null,
+        isOverride: !!(override?.enabled),
       },
-      totalPings:        taggedLogs.length,
-      officePings:       taggedLogs.filter(l => l.zone === 'office').length,
-      bufferBeforePings: taggedLogs.filter(l => l.zone === 'before').length,
-      bufferAfterPings:  taggedLogs.filter(l => l.zone === 'after').length,
-      logs:              taggedLogs,
+      totalPings:  logs.length,
+      logs: logs.map(l => ({
+        id:         l._id,
+        lat:        l.lat,
+        lng:        l.lng,
+        accuracy:   l.accuracy,
+        address:    l.address,
+        battery:    l.battery ?? null,
+        recordedAt: l.recordedAt,
+      })),
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
