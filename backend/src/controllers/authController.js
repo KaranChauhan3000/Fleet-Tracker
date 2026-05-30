@@ -238,3 +238,32 @@ exports.me = async (req, res, next) => {
     return res.json(userPayload(user, user.companyId));
   } catch (err) { next(err); }
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+//  SUPER ADMIN — LOGIN
+//  POST /api/auth/superadmin-login
+//  Body: { username, password }
+// ════════════════════════════════════════════════════════════════════════════
+exports.superAdminLogin = async (req, res, next) => {
+  try {
+    const { username, password } = req.body;
+    if (!username?.trim() || !password?.trim()) {
+      return res.status(400).json({ message: 'Username and password are required' });
+    }
+
+    const validUsername = process.env.SUPER_ADMIN_USERNAME || 'superadmin';
+    const validPassword = process.env.SUPER_ADMIN_PASSWORD || 'SuperAdmin@2024!';
+
+    if (username.trim() !== validUsername || password.trim() !== validPassword) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    const { signToken } = require('../utils/jwt');
+    const token = signToken({ id: 'superadmin', role: 'superadmin', username: validUsername });
+
+    return res.json({
+      token,
+      user: { id: 'superadmin', username: validUsername, role: 'superadmin' },
+    });
+  } catch (err) { next(err); }
+};
