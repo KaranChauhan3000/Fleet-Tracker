@@ -64,4 +64,19 @@ router.get('/fuel-logs', ctrl.listFuelLogs);
 router.get('/reports/monthly-comparison', ctrl.monthlyComparison);
 router.get('/reports/summary',            ctrl.reportSummary);
 
+// ── Analytics ─────────────────────────────────────────────────────
+router.get('/analytics/overview',          ctrl.analyticsOverview);
+router.get('/analytics/registrations',     ctrl.registrationTimeSeries);
+router.get('/analytics/membership',        ctrl.membershipAnalytics);
+router.get('/analytics/vehicle-breakdown', ctrl.vehicleBreakdown);
+
+// ── Memberships ───────────────────────────────────────────────────
+router.get('/memberships',                  ctrl.listMemberships);
+router.put('/companies/:id/membership',     ctrl.updateMembership);
+router.post('/companies/:id/approve-limit', ctrl.approveLimitRequest);
+router.post('/companies/:id/reject-limit',  ctrl.rejectLimitRequest);
+
+// ── Activity Log ──────────────────────────────────────────────────
+router.get('/activity-log', ctrl.activityLog);
+
 module.exports = router;
