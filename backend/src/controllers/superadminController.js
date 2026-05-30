@@ -519,3 +519,264 @@ exports.reportSummary = async (req, res, next) => {
     });
   } catch (err) { next(err); }
 };
+
+// ─────────────────────────────────────────────────────────────────
+// NEW ENDPOINTS — Analytics, Memberships, Activity Log
+// Added for Super Admin Dashboard v5
+// ─────────────────────────────────────────────────────────────────
+
+const ActivityLog = require('../models/ActivityLog');
+
+// Internal helper — logs any action silently, never crashes a request
+async function logActivity({ action, entity, entityId, entityName, detail = '', companyName = '', performedBy = 'superadmin' }) {
+  try {
+    await ActivityLog.create({ action, entity, entityId, entityName, detail, companyName, performedBy });
+  } catch (_) {}
+}
+
+// ── GET /api/superadmin/analytics/overview ────────────────────────
+exports.analyticsOverview = async (req, res, next) => {
+  try {
+    const now        = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekStart  = new Date(todayStart); weekStart.setDate(weekStart.getDate() - 7);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const prevMStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMEnd   = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+
+    const [
+      todayUsers, todayVehicles, todayCompanies, todayAdmins,
+      weekUsers, weekVehicles, weekCompanies,
+      monthUsers, monthVehicles, monthCompanies,
+      prevUsers, prevVehicles, prevCompanies,
+    ] = await Promise.all([
+      User.countDocuments({ createdAt: { $gte: todayStart } }),
+      Vehicle.countDocuments({ createdAt: { $gte: todayStart } }),
+      Company.countDocuments({ createdAt: { $gte: todayStart } }),
+      Admin.countDocuments({ createdAt: { $gte: todayStart } }),
+      User.countDocuments({ createdAt: { $gte: weekStart } }),
+      Vehicle.countDocuments({ createdAt: { $gte: weekStart } }),
+      Company.countDocuments({ createdAt: { $gte: weekStart } }),
+      User.countDocuments({ createdAt: { $gte: monthStart } }),
+      Vehicle.countDocuments({ createdAt: { $gte: monthStart } }),
+      Company.countDocuments({ createdAt: { $gte: monthStart } }),
+      User.countDocuments({ createdAt: { $gte: prevMStart, $lte: prevMEnd } }),
+      Vehicle.countDocuments({ createdAt: { $gte: prevMStart, $lte: prevMEnd } }),
+      Company.countDocuments({ createdAt: { $gte: prevMStart, $lte: prevMEnd } }),
+    ]);
+
+    const pct = (curr, prev) =>
+      prev === 0 ? (curr > 0 ? 100 : 0) : Math.round(((curr - prev) / prev) * 100);
+
+    res.json({
+      today:  { users: todayUsers, vehicles: todayVehicles, companies: todayCompanies, admins: todayAdmins },
+      week:   { users: weekUsers,  vehicles: weekVehicles,  companies: weekCompanies },
+      month:  { users: monthUsers, vehicles: monthVehicles, companies: monthCompanies },
+      growth: {
+        users:     pct(monthUsers,     prevUsers),
+        vehicles:  pct(monthVehicles,  prevVehicles),
+        companies: pct(monthCompanies, prevCompanies),
+      },
+    });
+  } catch (err) { next(err); }
+};
+
+// ── GET /api/superadmin/analytics/registrations?range=30 ──────────
+exports.registrationTimeSeries = async (req, res, next) => {
+  try {
+    const days = Math.min(365, Math.max(7, parseInt(req.query.range) || 30));
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    from.setHours(0, 0, 0, 0);
+
+    const [users, vehicles, companies] = await Promise.all([
+      User.aggregate([
+        { $match: { createdAt: { $gte: from } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+      Vehicle.aggregate([
+        { $match: { createdAt: { $gte: from } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+      Company.aggregate([
+        { $match: { createdAt: { $gte: from } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+    ]);
+
+    const allDates = [];
+    const cur = new Date(from);
+    const end = new Date(); end.setHours(23, 59, 59, 999);
+    while (cur <= end) { allDates.push(cur.toISOString().split('T')[0]); cur.setDate(cur.getDate() + 1); }
+
+    const toMap = arr => { const m = {}; arr.forEach(x => { m[x._id] = x.count; }); return m; };
+    const um = toMap(users), vm = toMap(vehicles), cm = toMap(companies);
+
+    res.json({
+      range: days,
+      data: allDates.map(d => ({ date: d, users: um[d] || 0, vehicles: vm[d] || 0, companies: cm[d] || 0 })),
+    });
+  } catch (err) { next(err); }
+};
+
+// ── GET /api/superadmin/analytics/membership ──────────────────────
+exports.membershipAnalytics = async (req, res, next) => {
+  try {
+    const now      = new Date();
+    const in30Days = new Date(now); in30Days.setDate(in30Days.getDate() + 30);
+
+    const [total, withPlan, monthly, yearly, expiringSoon, expired, pendingReqs] = await Promise.all([
+      Company.countDocuments(),
+      Company.countDocuments({ 'membership.plan': { $ne: null } }),
+      Company.countDocuments({ 'membership.plan': 'monthly' }),
+      Company.countDocuments({ 'membership.plan': 'yearly' }),
+      Company.countDocuments({ 'membership.expiresAt': { $gte: now, $lte: in30Days } }),
+      Company.countDocuments({ 'membership.expiresAt': { $lt: now }, 'membership.plan': { $ne: null } }),
+      Company.countDocuments({ 'membership.limitRequest.pending': true }),
+    ]);
+
+    const [expiringSoonList, expiredList, pendingList] = await Promise.all([
+      Company.find({ 'membership.expiresAt': { $gte: now, $lte: in30Days } }).select('name slug membership').sort({ 'membership.expiresAt': 1 }).limit(20),
+      Company.find({ 'membership.expiresAt': { $lt: now }, 'membership.plan': { $ne: null } }).select('name slug membership').sort({ 'membership.expiresAt': -1 }).limit(20),
+      Company.find({ 'membership.limitRequest.pending': true }).select('name slug membership').sort({ 'membership.limitRequest.submittedAt': -1 }),
+    ]);
+
+    const mapC = c => ({ id: c._id, name: c.name, slug: c.slug, plan: c.membership.plan, expiresAt: c.membership.expiresAt, vehicleLimit: c.membership.vehicleLimit });
+
+    res.json({
+      totals: { total, withPlan, monthly, yearly, expiringSoon, expired, pendingReqs, withoutPlan: total - withPlan },
+      expiringSoon: expiringSoonList.map(mapC),
+      expired:      expiredList.map(mapC),
+      pendingLimitRequests: pendingList.map(c => ({ ...mapC(c), request: c.membership.limitRequest })),
+    });
+  } catch (err) { next(err); }
+};
+
+// ── GET /api/superadmin/analytics/vehicle-breakdown ───────────────
+exports.vehicleBreakdown = async (req, res, next) => {
+  try {
+    const [byFuel, byStatus] = await Promise.all([
+      Vehicle.aggregate([{ $group: { _id: '$fuelType', count: { $sum: 1 } } }, { $sort: { count: -1 } }]),
+      Vehicle.aggregate([{ $group: { _id: '$status',   count: { $sum: 1 } } }]),
+    ]);
+    res.json({
+      byFuelType: byFuel.map(x => ({ name: x._id || 'Unknown', value: x.count })),
+      byStatus:   byStatus.map(x => ({ name: x._id || 'Unknown', value: x.count })),
+    });
+  } catch (err) { next(err); }
+};
+
+// ── GET /api/superadmin/memberships ───────────────────────────────
+exports.listMemberships = async (req, res, next) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit  = Math.min(50, parseInt(req.query.limit) || 15);
+    const skip   = (page - 1) * limit;
+    const search = req.query.search?.trim();
+    const filter = req.query.filter || 'all';
+
+    const now      = new Date();
+    const in30Days = new Date(now); in30Days.setDate(in30Days.getDate() + 30);
+
+    const query = {};
+    if (search) query.$or = [{ name: { $regex: search, $options: 'i' } }, { slug: { $regex: search, $options: 'i' } }];
+    if (filter === 'expiring') query['membership.expiresAt'] = { $gte: now, $lte: in30Days };
+    if (filter === 'expired')  { query['membership.expiresAt'] = { $lt: now }; query['membership.plan'] = { $ne: null }; }
+    if (filter === 'pending')  query['membership.limitRequest.pending'] = true;
+
+    const [companies, total] = await Promise.all([
+      Company.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Company.countDocuments(query),
+    ]);
+
+    res.json({
+      data: companies.map(c => ({ id: c._id, name: c.name, slug: c.slug, isActive: c.isActive, createdAt: c.createdAt, membership: c.membership || null })),
+      total, page, limit,
+    });
+  } catch (err) { next(err); }
+};
+
+// ── PUT /api/superadmin/companies/:id/membership ──────────────────
+exports.updateMembership = async (req, res, next) => {
+  try {
+    const { plan, vehicleLimit, expiresAt } = req.body;
+    const update = {};
+    if (plan         !== undefined) update['membership.plan']         = plan;
+    if (vehicleLimit !== undefined) update['membership.vehicleLimit'] = parseInt(vehicleLimit);
+    if (expiresAt    !== undefined) update['membership.expiresAt']    = expiresAt ? new Date(expiresAt) : null;
+
+    const company = await Company.findByIdAndUpdate(req.params.id, { $set: update }, { new: true, runValidators: true });
+    if (!company) return res.status(404).json({ message: 'Company not found' });
+
+    await logActivity({ action: 'update', entity: 'membership', entityId: company._id, entityName: company.name, detail: `Plan: ${plan || 'unchanged'}, Limit: ${vehicleLimit || 'unchanged'}` });
+    res.json({ success: true, membership: company.membership });
+  } catch (err) { next(err); }
+};
+
+// ── POST /api/superadmin/companies/:id/approve-limit ─────────────
+exports.approveLimitRequest = async (req, res, next) => {
+  try {
+    const company = await Company.findById(req.params.id);
+    if (!company) return res.status(404).json({ message: 'Company not found' });
+    if (!company.membership?.limitRequest?.pending) return res.status(400).json({ message: 'No pending limit request' });
+
+    const newLimit = company.membership.limitRequest.requested;
+    company.membership.vehicleLimit             = newLimit;
+    company.membership.limitRequest.pending     = false;
+    company.membership.limitRequest.requested   = 0;
+    company.membership.limitRequest.reason      = '';
+    company.membership.limitRequest.submittedAt = null;
+    await company.save();
+
+    await logActivity({ action: 'approve', entity: 'membership', entityId: company._id, entityName: company.name, detail: `Vehicle limit approved: ${newLimit}` });
+    res.json({ success: true, newLimit });
+  } catch (err) { next(err); }
+};
+
+// ── POST /api/superadmin/companies/:id/reject-limit ──────────────
+exports.rejectLimitRequest = async (req, res, next) => {
+  try {
+    const company = await Company.findById(req.params.id);
+    if (!company) return res.status(404).json({ message: 'Company not found' });
+    if (!company.membership?.limitRequest?.pending) return res.status(400).json({ message: 'No pending limit request' });
+
+    company.membership.limitRequest.pending     = false;
+    company.membership.limitRequest.requested   = 0;
+    company.membership.limitRequest.reason      = '';
+    company.membership.limitRequest.submittedAt = null;
+    await company.save();
+
+    await logActivity({ action: 'reject', entity: 'membership', entityId: company._id, entityName: company.name, detail: 'Vehicle limit request rejected' });
+    res.json({ success: true });
+  } catch (err) { next(err); }
+};
+
+// ── GET /api/superadmin/activity-log ─────────────────────────────
+exports.activityLog = async (req, res, next) => {
+  try {
+    const page   = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit  = Math.min(100, parseInt(req.query.limit) || 25);
+    const skip   = (page - 1) * limit;
+    const search = req.query.search?.trim();
+    const entity = req.query.entity;
+    const action = req.query.action;
+
+    const query = {};
+    if (search) query.$or = [{ entityName: { $regex: search, $options: 'i' } }, { detail: { $regex: search, $options: 'i' } }, { performedBy: { $regex: search, $options: 'i' } }];
+    if (entity) query.entity = entity;
+    if (action) query.action = action;
+
+    const [logs, total] = await Promise.all([
+      ActivityLog.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      ActivityLog.countDocuments(query),
+    ]);
+
+    res.json({
+      data: logs.map(l => ({ id: l._id, action: l.action, entity: l.entity, entityName: l.entityName, detail: l.detail, performedBy: l.performedBy, companyName: l.companyName, createdAt: l.createdAt })),
+      total, page, limit,
+    });
+  } catch (err) { next(err); }
+};
