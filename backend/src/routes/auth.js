@@ -44,6 +44,16 @@ router.post('/user/login',
   ctrl.userLogin
 );
 
+// ── Super Admin Login ─────────────────────────────────────────────────────────
+router.post('/superadmin-login',
+  [
+    body('username').trim().notEmpty().withMessage('Username is required'),
+    body('password').trim().notEmpty().withMessage('Password is required'),
+  ],
+  validate,
+  ctrl.superAdminLogin
+);
+
 // ── Shared ────────────────────────────────────────────────────────────────────
 router.post('/logout', protect, ctrl.logout);
 router.get('/me',      protect, ctrl.me);
