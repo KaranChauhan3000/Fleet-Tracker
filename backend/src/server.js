@@ -16,7 +16,8 @@ const authRoutes       = require('./routes/auth');
 const adminRoutes      = require('./routes/admin');
 const userRoutes       = require('./routes/user');
 const membershipRoutes = require('./routes/membership');
-const familyRoutes     = require('./routes/family');
+const familyRoutes      = require('./routes/family');
+const superadminRoutes  = require('./routes/superadmin');
 const membershipCtrl   = require('./controllers/membershipController');
 
 // Drop stale indexes from old schema versions on startup
@@ -93,7 +94,8 @@ app.use('/api/auth',             authRoutes);
 app.use('/api/admin',            adminRoutes);
 app.use('/api/user',             userRoutes);
 app.use('/api/admin/membership', membershipRoutes);
-app.use('/api/family',           familyRoutes);
+app.use('/api/family',      familyRoutes);
+app.use('/api/superadmin',  superadminRoutes);
 
 // ── Razorpay Webhook (no auth — validated by signature inside handler) ────
 // Must use raw body for signature verification
